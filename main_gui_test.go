@@ -172,3 +172,83 @@ func TestLeapCmdQDoesNotQuit(t *testing.T) {
 		t.Fatalf("last commit: want %q, got %q", "q", got)
 	}
 }
+
+// GUI input: Cmd+H should be captured by Leap (macOS hides windows on Cmd+H).
+// We ensure the query appends and the app keeps running.
+func TestLeapCmdHDoesNotHide(t *testing.T) {
+	_ = os.Setenv("SDL_VIDEODRIVER", "dummy")
+	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
+		t.Skipf("skip: SDL init failed (%v)", err)
+	}
+	defer sdl.Quit()
+
+	app := appState{ed: editor.NewEditor("hhhat")}
+
+	sdl.SetModState(sdl.KMOD_RGUI)
+	handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_RGUI, Sym: sdl.K_RGUI},
+		WindowID: 1,
+	})
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_H, Sym: sdl.K_h},
+		WindowID: 1,
+	}) {
+		t.Fatal("unexpected quit on Cmd+H")
+	}
+
+	if got := string(app.ed.Leap.Query); got != "h" {
+		t.Fatalf("leap query: want %q, got %q", "h", got)
+	}
+	if app.ed.Caret != 0 {
+		t.Fatalf("caret: want 0, got %d", app.ed.Caret)
+	}
+}
+
+// GUI input: Cmd+M normally minimizes the window. Ensure we ignore the window
+// minimize event and still capture the Leap query.
+func TestLeapCmdMDoesNotMinimize(t *testing.T) {
+	_ = os.Setenv("SDL_VIDEODRIVER", "dummy")
+	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
+		t.Skipf("skip: SDL init failed (%v)", err)
+	}
+	defer sdl.Quit()
+
+	win, _, err := sdl.CreateWindowAndRenderer(200, 100, sdl.WINDOW_HIDDEN)
+	if err != nil {
+		t.Skipf("skip: cannot create window (%v)", err)
+	}
+	defer win.Destroy()
+
+	app := appState{ed: editor.NewEditor("mmm"), win: win}
+
+	sdl.SetModState(sdl.KMOD_RGUI)
+	handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_RGUI, Sym: sdl.K_RGUI},
+		WindowID: 1,
+	})
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_M, Sym: sdl.K_m},
+		WindowID: 1,
+	}) {
+		t.Fatal("unexpected quit on Cmd+M keydown")
+	}
+
+	// Simulate minimize window event arriving from OS; handler should restore and keep running.
+	if !handleEvent(&app, &sdl.WindowEvent{Event: sdl.WINDOWEVENT_MINIMIZED}) {
+		t.Fatal("unexpected quit on window minimize")
+	}
+
+	if got := string(app.ed.Leap.Query); got != "m" {
+		t.Fatalf("leap query: want %q, got %q", "m", got)
+	}
+}

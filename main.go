@@ -34,6 +34,7 @@ type appState struct {
 	lastEvent string
 	lastMods  sdl.Keymod
 	blinkAt   time.Time
+	win       *sdl.Window
 }
 
 func main() {
@@ -72,7 +73,7 @@ func main() {
 	)
 	ed.SetClipboard(sdlClipboard{})
 
-	app := appState{ed: ed, blinkAt: time.Now()}
+	app := appState{ed: ed, blinkAt: time.Now(), win: win}
 
 	sdl.StartTextInput()
 	defer sdl.StopTextInput()
@@ -104,6 +105,15 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			return true
 		}
 		return false
+
+	case *sdl.WindowEvent:
+		// Avoid minimizing/hiding the window from system combos during Leap; restore it.
+		if (e.Event == sdl.WINDOWEVENT_MINIMIZED || e.Event == sdl.WINDOWEVENT_HIDDEN) && app.win != nil {
+			app.win.Restore()
+			app.win.Raise()
+			return true
+		}
+		return true
 
 	case *sdl.KeyboardEvent:
 		app.blinkAt = time.Now()
