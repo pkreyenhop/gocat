@@ -396,7 +396,7 @@ func scanBack(hay, needle []rune, start int) (int, bool) {
 }
 
 func matchAt(hay, needle []rune, i int) bool {
-	for j := 0; j < len(needle); j++ {
+	for j := range needle {
 		if hay[i+j] != needle[j] {
 			return false
 		}
@@ -416,16 +416,4 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
