@@ -744,7 +744,8 @@ func findInDir(hay []rune, needle []rune, start int, dir Dir, wrap bool) (int, b
 	}
 
 	// backward
-	if pos, ok := scanBack(hay, needle, start); ok {
+	searchStart := start - 1 // search strictly before start to get the previous match
+	if pos, ok := scanBack(hay, needle, searchStart); ok {
 		return pos, true
 	}
 	if wrap {
@@ -763,6 +764,9 @@ func scanFwd(hay, needle []rune, start int) (int, bool) {
 }
 
 func scanBack(hay, needle []rune, start int) (int, bool) {
+	if start < 0 {
+		return -1, false
+	}
 	lastStart := min(start, len(hay)-len(needle))
 	for i := lastStart; i >= 0; i-- {
 		if matchAt(hay, needle, i) {
