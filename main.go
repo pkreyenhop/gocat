@@ -617,6 +617,10 @@ func modsString(m sdl.Keymod) string {
 
 func pickFont() string {
 	candidates := []string{
+		"/Library/Fonts/JetBrainsMono-Regular.ttf",
+		"/System/Library/Fonts/SFMono-Regular.otf",
+		"/Library/Fonts/FiraCode-Regular.ttf",
+		"/Library/Fonts/CascadiaMono.ttf",
 		"/System/Library/Fonts/Menlo.ttc",
 		"/Library/Fonts/Menlo.ttc",
 		"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -631,7 +635,7 @@ func pickFont() string {
 	if _, err := os.Stat(local); err == nil {
 		return local
 	}
-	panic("No usable mono font found. Install DejaVu/Liberation or place DejaVuSansMono.ttf next to main.go")
+	panic("No usable mono font found. Install JetBrains Mono / Fira Code / Cascadia / Menlo / DejaVu/Liberation or place DejaVuSansMono.ttf next to main.go")
 }
 
 func must(err error) {
