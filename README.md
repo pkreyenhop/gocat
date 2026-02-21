@@ -13,7 +13,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 
 ## Running
 
-Requires Go 1.25.5 (per `go.mod`) and SDL2/SDL2_ttf libraries available to CGO (e.g., via Homebrew on macOS). Run the prototype with:
+Requires Go 1.26+ (per `go.mod`) and SDL2/SDL2_ttf libraries available to CGO (e.g., via Homebrew on macOS). Run the prototype with:
 
 ```sh
 go run .

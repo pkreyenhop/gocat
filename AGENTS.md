@@ -29,4 +29,4 @@
 - PRs: include a short summary of user-visible changes (UI or behaviour), call out dependency shifts (SDL/toolchain), and link related issues. Screenshots or screen recordings are helpful if rendering changes.
 
 ## Environment & Configuration Notes
-- Go 1.25.5 per `go.mod`. Ensure SDL2/SDL2_ttf headers and shared libs are available via `pkg-config` or well-known paths. `pickFont()` searches Menlo/DejaVu/Liberation; ensure at least one exists or place `DejaVuSansMono.ttf` beside the binary.
+- Go 1.26+ per `go.mod`. Ensure SDL2/SDL2_ttf headers and shared libs are available via `pkg-config` or well-known paths. `pickFont()` searches Menlo/DejaVu/Liberation; ensure at least one exists or place `DejaVuSansMono.ttf` beside the binary.
