@@ -125,6 +125,71 @@ func TestShortcutCtrlOOpensPickerAndCtrlLLoads(t *testing.T) {
 	}
 }
 
+func TestCtrlLReusesLoadedBufferOrAddsNew(t *testing.T) {
+	ensureSDL(t)
+	root := t.TempDir()
+	one := filepath.Join(root, "one.txt")
+	two := filepath.Join(root, "two.txt")
+	if err := os.WriteFile(one, []byte("ONE"), 0644); err != nil {
+		t.Fatalf("write one: %v", err)
+	}
+	if err := os.WriteFile(two, []byte("TWO"), 0644); err != nil {
+		t.Fatalf("write two: %v", err)
+	}
+
+	app := appState{openRoot: root}
+	app.initBuffers(editor.NewEditor(""))
+
+	// Open picker
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_o},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+O")
+	}
+	if got := len(app.buffers); got != 2 {
+		t.Fatalf("expected picker buffer, got %d buffers", got)
+	}
+
+	// Move caret to second line (two.txt) and load into new buffer.
+	app.ed.Caret = len([]rune("one.txt")) + 1
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_l},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+L for two.txt")
+	}
+	if got := len(app.buffers); got != 3 {
+		t.Fatalf("Ctrl+L should open new buffer, got %d", got)
+	}
+	if filepath.Clean(app.currentPath) != filepath.Clean(two) {
+		t.Fatalf("active path: want %s, got %s", two, app.currentPath)
+	}
+
+	// Go back to picker buffer and load the same file again; should switch to existing buffer.
+	app.bufIdx = 1
+	app.syncActiveBuffer()
+	app.ed.Caret = len([]rune("one.txt")) + 1
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_l},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+L for existing")
+	}
+	if got := len(app.buffers); got != 3 {
+		t.Fatalf("should not add buffer when already open; got %d", got)
+	}
+	if filepath.Clean(app.currentPath) != filepath.Clean(two) || app.bufIdx != 2 {
+		t.Fatalf("should switch to existing buffer; path=%s idx=%d", app.currentPath, app.bufIdx)
+	}
+}
+
 func TestCursorKeyRepeatMovesCaret(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("abcd"))

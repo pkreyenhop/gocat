@@ -743,8 +743,18 @@ func loadFileAtCaret(app *appState) error {
 		return fmt.Errorf("invalid path")
 	}
 	full := filepath.Join(slot.pickerRoot, line)
-	slot.picker = false
-	slot.pickerRoot = ""
+	// If already loaded, jump to that buffer.
+	for i, b := range app.buffers {
+		if filepath.Clean(b.path) == filepath.Clean(full) {
+			app.bufIdx = i
+			app.syncActiveBuffer()
+			return nil
+		}
+	}
+
+	// Otherwise, open in a new buffer and leave the picker intact.
+	app.addBuffer()
+	app.openRoot = filepath.Dir(full)
 	return openPath(app, full)
 }
 
