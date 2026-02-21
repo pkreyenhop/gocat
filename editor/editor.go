@@ -303,14 +303,11 @@ func (e *Editor) MoveCaretLine(lines []string, deltaLines int, extendSelection b
 	curLine, curCol := LineColForPos(lines, e.Caret)
 	targetLine := clamp(curLine+deltaLines, 0, len(lines)-1)
 	// Clamp col to target line length
-	targetCol := curCol
-	if targetCol > len([]rune(lines[targetLine])) {
-		targetCol = len([]rune(lines[targetLine]))
-	}
+	targetCol := min(curCol, len([]rune(lines[targetLine])))
 
 	// Compute new caret absolute position
 	pos := 0
-	for i := 0; i < targetLine; i++ {
+	for i := range targetLine {
 		pos += len([]rune(lines[i])) + 1 // include newline
 	}
 	pos += targetCol

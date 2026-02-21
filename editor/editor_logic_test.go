@@ -205,7 +205,7 @@ func TestMoveCaretPage(t *testing.T) {
 		f.ed.MoveCaretPage(lines, 5, DirFwd, false)
 		// After 5 lines down, caret should be at start of line 5 (0-indexed)
 		pos := 0
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			pos += len([]rune(lines[i])) + 1
 		}
 		f.expectCaret(pos)
@@ -214,7 +214,7 @@ func TestMoveCaretPage(t *testing.T) {
 		f.ed.MoveCaretPage(lines, 3, DirBack, true) // extend selection up 3 lines
 		lines = SplitLines(f.ed.Buf)
 		posBack := 0
-		for i := 0; i < 2; i++ { // back to line 2
+		for i := range 2 { // back to line 2
 			posBack += len([]rune(lines[i])) + 1
 		}
 		f.expectCaret(posBack)

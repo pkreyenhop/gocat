@@ -169,6 +169,73 @@ func TestCursorKeyRepeatMovesCaret(t *testing.T) {
 	}
 }
 
+func TestCtrlCommaPeriodPageScroll(t *testing.T) {
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = "x"
+	}
+	text := strings.Join(lines, "\n")
+
+	app := appState{}
+	app.initBuffers(editor.NewEditor(text))
+	app.ed.Caret = 0
+
+	posForLine := func(line int) int {
+		if line <= 0 {
+			return 0
+		}
+		if line >= len(lines) {
+			return len(app.ed.Buf)
+		}
+		return line * 2 // "x\n" per line
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_PERIOD},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+.")
+	}
+	if got := editor.CaretLineAt(editor.SplitLines(app.ed.Buf), app.ed.Caret); got != 20 {
+		t.Fatalf("Ctrl+. caret line: want 20, got %d", got)
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_COMMA},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+,")
+	}
+	if got := editor.CaretLineAt(editor.SplitLines(app.ed.Buf), app.ed.Caret); got != 0 {
+		t.Fatalf("Ctrl+, caret line: want 0, got %d", got)
+	}
+
+	app.ed.Caret = posForLine(5)
+	app.ed.Sel.Active = false
+	sdl.SetModState(sdl.KMOD_CTRL | sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_PERIOD, Mod: sdl.KMOD_LSHIFT},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+Shift+.")
+	}
+	if !app.ed.Sel.Active {
+		t.Fatalf("Ctrl+Shift+. should activate selection")
+	}
+	if got := editor.CaretLineAt(editor.SplitLines(app.ed.Buf), app.ed.Caret); got != 25 {
+		t.Fatalf("Ctrl+Shift+. caret line: want 25, got %d", got)
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != posForLine(5) || b != posForLine(25) {
+		t.Fatalf("selection mismatch: got (%d,%d), want (%d,%d)", a, b, posForLine(5), posForLine(25))
+	}
+}
+
 func TestCtrlAETCKill(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("hello\nworld"))

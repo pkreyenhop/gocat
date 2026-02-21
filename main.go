@@ -56,6 +56,7 @@ type appState struct {
 	buffers     []bufferSlot
 	bufIdx      int
 	currentPath string // mirrors active buffer path for status messages
+	scrollLine  int
 	showHelp    bool
 }
 
@@ -78,7 +79,7 @@ var helpEntries = []helpEntry{
 	{"Buffer start / end", "Ctrl+Shift+A / Ctrl+Shift+E"},
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
-	{"Navigation", "Arrows, PageUp/Down (Shift = select)"},
+	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
 	{"Escape", "Clear selection; close picker"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
 }
@@ -387,6 +388,14 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					} else {
 						app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
 					}
+					return true
+				case sdl.K_COMMA:
+					lines := editor.SplitLines(ed.Buf)
+					ed.MoveCaretPage(lines, 20, editor.DirBack, (mods&sdl.KMOD_SHIFT) != 0)
+					return true
+				case sdl.K_PERIOD:
+					lines := editor.SplitLines(ed.Buf)
+					ed.MoveCaretPage(lines, 20, editor.DirFwd, (mods&sdl.KMOD_SHIFT) != 0)
 					return true
 				case sdl.K_c:
 					ed.CopySelection()
@@ -969,6 +978,38 @@ func drawHelp(r *sdl.Renderer, font *ttf.Font, x, y int, col sdl.Color) int {
 	return h + lineH
 }
 
+// ensureCaretVisible adjusts the scroll offset so the caret's line stays
+// within the visible viewport.
+func ensureCaretVisible(app *appState, caretLine, totalLines, visibleLines int) {
+	if app == nil {
+		return
+	}
+	if caretLine < 0 {
+		caretLine = 0
+	}
+	if totalLines < 0 {
+		totalLines = 0
+	}
+	if visibleLines <= 0 {
+		visibleLines = 1
+	}
+	maxStart := maxInt(0, totalLines-visibleLines)
+	if app.scrollLine > maxStart {
+		app.scrollLine = maxStart
+	}
+	if caretLine < app.scrollLine {
+		app.scrollLine = caretLine
+	} else if caretLine >= app.scrollLine+visibleLines {
+		app.scrollLine = caretLine - visibleLines + 1
+	}
+	if app.scrollLine > maxStart {
+		app.scrollLine = maxStart
+	}
+	if app.scrollLine < 0 {
+		app.scrollLine = 0
+	}
+}
+
 // ======================
 // Rendering
 // ======================
@@ -1046,29 +1087,40 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	drawText(r, font, left, top+lineH+2, app.lastEvent, dim)
 
 	// Text start
-	y0 := top + (lineH * 2) + 12
-	y := y0
+	textTop := top + (lineH * 2) + 12
+	y := textTop
 
 	// Help overlay
 	if app.showHelp {
-		helpY := y0
+		helpY := textTop
 		drawText(r, font, left, helpY-lineH, "Shortcuts", blue)
 		y = drawHelp(r, font, left, helpY, fg) + lineH
 	}
+
+	contentTop := y
+	usableHeight := h - contentTop - 60
+	if usableHeight < lineH {
+		usableHeight = lineH
+	}
+	visibleLines := maxInt(1, (usableHeight+lineH-1)/lineH)
+	cLine := editor.CaretLineAt(lines, app.ed.Caret)
+	cCol := editor.CaretColAt(lines, app.ed.Caret)
+	ensureCaretVisible(app, cLine, len(lines), visibleLines)
+	startLine := clamp(app.scrollLine, 0, maxInt(0, len(lines)-visibleLines))
+	app.scrollLine = startLine
+	y = contentTop
 
 	// Draw selection background (monospace-based)
 	if app.ed.Sel.Active {
 		a, b := app.ed.Sel.Normalised()
 		a = clamp(a, 0, len(app.ed.Buf))
 		b = clamp(b, 0, len(app.ed.Buf))
-		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, y0, lineH, cellW, selCol)
+		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, contentTop, lineH, cellW, selCol, startLine, visibleLines)
 	}
 
-	// Caret position in line/col space
-	cLine := editor.CaretLineAt(lines, app.ed.Caret)
-	cCol := editor.CaretColAt(lines, app.ed.Caret)
-
-	for i, line := range lines {
+	drawn := 0
+	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
+		line := lines[i]
 		drawText(r, font, left, y, line, fg)
 
 		if i == cLine && blinkOn {
@@ -1085,17 +1137,16 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		}
 
 		y += lineH
-		if y > h-60 {
-			break
-		}
+		drawn++
 	}
 
 	// underline found position while leaping
 	if app.ed.Leap.Active && app.ed.Leap.LastFoundPos >= 0 {
 		fLine := editor.CaretLineAt(lines, app.ed.Leap.LastFoundPos)
 		fCol := editor.CaretColAt(lines, app.ed.Leap.LastFoundPos)
-		yFound := y0 + fLine*lineH
-		if yFound >= top && yFound <= h-60 {
+		rel := fLine - startLine
+		if rel >= 0 && rel < visibleLines {
+			yFound := contentTop + rel*lineH
 			x := left + fCol*cellW
 			yy := yFound + lineH - 3
 			r.SetDrawColor(green.R, green.G, green.B, green.A)
@@ -1106,38 +1157,34 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	r.Present()
 }
 
-func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color) {
+func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color, startLine, visibleLines int) {
 	aLine, aCol := editor.LineColForPos(lines, a)
 	bLine, bCol := editor.LineColForPos(lines, b)
 
 	r.SetDrawColor(col.R, col.G, col.B, col.A)
 
-	if aLine == bLine {
-		x1 := left + aCol*cellW
-		x2 := left + bCol*cellW
-		if x2 < x1 {
-			x1, x2 = x2, x1
+	visStart := startLine
+	visEnd := startLine + visibleLines - 1
+	for ln := aLine; ln <= bLine; ln++ {
+		if ln < visStart || ln > visEnd {
+			continue
 		}
-		_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
-		return
+		y := y0 + (ln-startLine)*lineH
+		startCol := 0
+		endCol := len([]rune(lines[ln]))
+		if ln == aLine {
+			startCol = aCol
+		}
+		if ln == bLine {
+			endCol = bCol
+		}
+		if endCol < startCol {
+			startCol, endCol = endCol, startCol
+		}
+		x1 := left + startCol*cellW
+		x2 := left + endCol*cellW
+		_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
 	}
-
-	// First line: from aCol to end of line
-	firstLen := len([]rune(lines[aLine]))
-	x1 := left + aCol*cellW
-	x2 := left + firstLen*cellW
-	_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
-
-	// Middle full lines
-	for ln := aLine + 1; ln < bLine; ln++ {
-		lineLen := len([]rune(lines[ln]))
-		_ = r.FillRect(&sdl.Rect{X: int32(left), Y: int32(y0 + ln*lineH), W: int32(maxInt(2, lineLen*cellW)), H: int32(lineH)})
-	}
-
-	// Last line: from start to bCol
-	x3 := left
-	x4 := left + bCol*cellW
-	_ = r.FillRect(&sdl.Rect{X: int32(x3), Y: int32(y0 + bLine*lineH), W: int32(maxInt(2, x4-x3)), H: int32(lineH)})
 
 	_ = buf // keep signature stable if you later want buffer-aware selection
 }
