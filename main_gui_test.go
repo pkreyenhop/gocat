@@ -115,3 +115,60 @@ func TestLeapKeydownCapture(t *testing.T) {
 		t.Fatalf("last commit: want %q, got %q", "h", got)
 	}
 }
+
+// GUI input: Cmd+Q should behave like any other letter in Leap and must not
+// close the app. We simulate a QuitEvent arriving mid-leap and ensure it is
+// ignored so Leap can commit normally.
+func TestLeapCmdQDoesNotQuit(t *testing.T) {
+	_ = os.Setenv("SDL_VIDEODRIVER", "dummy")
+	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
+		t.Skipf("skip: SDL init failed (%v)", err)
+	}
+	defer sdl.Quit()
+
+	app := appState{ed: editor.NewEditor("qq hello")}
+
+	// Start leap with Cmd
+	sdl.SetModState(sdl.KMOD_RGUI)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_RGUI, Sym: sdl.K_RGUI},
+		WindowID: 1,
+	}) {
+		t.Fatal("unexpected quit on Cmd down")
+	}
+
+	// Send Cmd+Q (keydown) to append query
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYDOWN,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_Q, Sym: sdl.K_q},
+		WindowID: 1,
+	}) {
+		t.Fatal("unexpected quit on Cmd+Q keydown")
+	}
+	if got := string(app.ed.Leap.Query); got != "q" {
+		t.Fatalf("leap query: want %q, got %q", "q", got)
+	}
+
+	// A QuitEvent arriving while leaping should be ignored.
+	if !handleEvent(&app, &sdl.QuitEvent{Type: sdl.QUIT}) {
+		t.Fatal("quit event should be ignored during leap")
+	}
+
+	// Release Cmd to commit
+	sdl.SetModState(0)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:     sdl.KEYUP,
+		Repeat:   0,
+		Keysym:   sdl.Keysym{Scancode: sdl.SCANCODE_RGUI, Sym: sdl.K_RGUI},
+		WindowID: 1,
+	}) {
+		t.Fatal("unexpected quit on Cmd up")
+	}
+
+	if got := string(app.ed.Leap.LastCommit); got != "q" {
+		t.Fatalf("last commit: want %q, got %q", "q", got)
+	}
+}

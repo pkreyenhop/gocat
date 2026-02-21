@@ -98,6 +98,10 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 	switch e := ev.(type) {
 
 	case *sdl.QuitEvent:
+		// Ignore quit while in Leap quasimode so Cmd+Q doesn't kill the app mid-leap.
+		if ed.Leap.Active {
+			return true
+		}
 		return false
 
 	case *sdl.KeyboardEvent:
