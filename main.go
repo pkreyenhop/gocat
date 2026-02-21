@@ -56,6 +56,8 @@ func main() {
 		sdl.WINDOW_SHOWN|sdl.WINDOW_RESIZABLE,
 	))
 	defer win.Destroy()
+	// Start in fullscreen to avoid platform window chrome handling (e.g., Cmd+M minimizing).
+	_ = win.SetFullscreen(sdl.WINDOW_FULLSCREEN_DESKTOP)
 
 	ren := mustRenderer(sdl.CreateRenderer(
 		win, -1,
