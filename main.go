@@ -320,6 +320,7 @@ func beginLeapGrab(app *appState) {
 		return
 	}
 	app.win.SetKeyboardGrab(true)
+	app.win.SetAlwaysOnTop(true)
 	app.win.Raise()
 }
 
@@ -328,6 +329,7 @@ func endLeapGrab(app *appState) {
 		return
 	}
 	app.win.SetKeyboardGrab(false)
+	app.win.SetAlwaysOnTop(false)
 }
 
 // ======================
