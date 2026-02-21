@@ -65,7 +65,7 @@ func main() {
 	))
 	defer ren.Destroy()
 
-	font := mustFont(ttf.OpenFont(pickFont(), 18))
+	font := mustFont(ttf.OpenFont(pickFont(), 22))
 	defer font.Close()
 
 	ed := editor.NewEditor(
