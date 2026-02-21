@@ -79,178 +79,190 @@ func main() {
 	running := true
 	for running {
 		for ev := sdl.PollEvent(); ev != nil; ev = sdl.PollEvent() {
-			switch e := ev.(type) {
-
-			case *sdl.QuitEvent:
+			if !handleEvent(&app, ev) {
 				running = false
-
-			case *sdl.KeyboardEvent:
-				sc := e.Keysym.Scancode
-				sym := e.Keysym.Sym
-				mods := sdl.GetModState()
-				app.lastMods = mods
-
-				// Basic event string
-				if e.Type == sdl.KEYDOWN {
-					app.lastEvent = fmt.Sprintf("KEYDOWN sc=%s key=%s repeat=%d mods=%s",
-						sdl.GetScancodeName(sc), sdl.GetKeyName(sym), e.Repeat, modsString(mods))
-				} else {
-					app.lastEvent = fmt.Sprintf("KEYUP   sc=%s key=%s mods=%s",
-						sdl.GetScancodeName(sc), sdl.GetKeyName(sym), modsString(mods))
-				}
-				if Debug {
-					fmt.Println(app.lastEvent)
-				}
-
-				// Quit (only when not leaping)
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
-					running = false
-					continue
-				}
-
-				// Clipboard ops on Ctrl (not Cmd, because Cmd is Leap keys)
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-					if ctrlHeld {
-						switch sym {
-						case sdl.K_c:
-							ed.CopySelection()
-							continue
-						case sdl.K_x:
-							ed.CutSelection()
-							continue
-						case sdl.K_v:
-							ed.PasteClipboard()
-							continue
-						}
-					}
-				}
-
-				// Leap Again: Ctrl + Cmd (Left or Right) without entering quasimode typing
-				// We trigger on KEYDOWN of LGUI/RGUI while Ctrl is held and leap is NOT active.
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
-					ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-					if ctrlHeld {
-						if sc == sdl.SCANCODE_RGUI {
-							ed.LeapAgain(editor.DirFwd)
-							continue
-						}
-						if sc == sdl.SCANCODE_LGUI {
-							ed.LeapAgain(editor.DirBack)
-							continue
-						}
-					}
-				}
-
-				// Track held Cmd state
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					if sc == sdl.SCANCODE_LGUI {
-						ed.Leap.HeldL = true
-					}
-					if sc == sdl.SCANCODE_RGUI {
-						ed.Leap.HeldR = true
-					}
-				}
-				if e.Type == sdl.KEYUP {
-					if sc == sdl.SCANCODE_LGUI {
-						ed.Leap.HeldL = false
-					}
-					if sc == sdl.SCANCODE_RGUI {
-						ed.Leap.HeldR = false
-					}
-				}
-
-				// Start Leap quasimode when first Cmd goes down (and Ctrl is NOT held)
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
-					ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-					if !ctrlHeld {
-						if sc == sdl.SCANCODE_RGUI {
-							ed.LeapStart(editor.DirFwd)
-							continue
-						}
-						if sc == sdl.SCANCODE_LGUI {
-							ed.LeapStart(editor.DirBack)
-							continue
-						}
-					}
-				}
-
-				// While leaping, if the OTHER Cmd is pressed, enable selection mode + anchor
-				if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					if (sc == sdl.SCANCODE_LGUI && ed.Leap.HeldR) || (sc == sdl.SCANCODE_RGUI && ed.Leap.HeldL) {
-						ed.BeginLeapSelection()
-					}
-				}
-
-				// End Leap when BOTH Cmd keys are up
-				if e.Type == sdl.KEYUP && ed.Leap.Active {
-					if !ed.Leap.HeldL && !ed.Leap.HeldR {
-						ed.LeapEndCommit()
-						continue
-					}
-				}
-
-				// While leaping: lifecycle keys and KEYDOWN fallback for pattern capture
-				if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					switch sym {
-					case sdl.K_ESCAPE:
-						ed.LeapCancel()
-						continue
-					case sdl.K_BACKSPACE:
-						ed.LeapBackspace()
-						continue
-					case sdl.K_RETURN, sdl.K_KP_ENTER:
-						ed.LeapEndCommit()
-						continue
-					}
-
-					// KEYDOWN fallback capture (Cmd suppresses TEXTINPUT on macOS)
-					if r, ok := keyToRune(sym, mods); ok {
-						ed.Leap.LastSrc = "keydown"
-						ed.LeapAppend(string(r))
-						continue
-					}
-				}
-
-				// Normal editing (outside leap)
-				if !ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					switch sym {
-					case sdl.K_BACKSPACE:
-						ed.BackspaceOrDeleteSelection(true)
-					case sdl.K_DELETE:
-						ed.BackspaceOrDeleteSelection(false)
-					case sdl.K_LEFT:
-						ed.MoveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
-					case sdl.K_RIGHT:
-						ed.MoveCaret(1, (mods&sdl.KMOD_SHIFT) != 0)
-					case sdl.K_RETURN, sdl.K_KP_ENTER:
-						ed.InsertText("\n")
-					}
-				}
-
-			case *sdl.TextInputEvent:
-				text := textInputString(e)
-				app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
-				if Debug {
-					fmt.Println(app.lastEvent)
-				}
-
-				if text == "" || !utf8.ValidString(text) {
-					continue
-				}
-
-				if ed.Leap.Active {
-					ed.Leap.LastSrc = "textinput"
-					ed.LeapAppend(text)
-				} else {
-					ed.InsertText(text)
-				}
+				break
 			}
 		}
 
 		render(ren, win, font, &app)
 		time.Sleep(2 * time.Millisecond)
 	}
+}
+
+// handleEvent processes a single SDL event and mutates app/editor state.
+// It returns false when the app should quit.
+func handleEvent(app *appState, ev sdl.Event) bool {
+	ed := app.ed
+
+	switch e := ev.(type) {
+
+	case *sdl.QuitEvent:
+		return false
+
+	case *sdl.KeyboardEvent:
+		sc := e.Keysym.Scancode
+		sym := e.Keysym.Sym
+		mods := sdl.GetModState()
+		app.lastMods = mods
+
+		// Basic event string
+		if e.Type == sdl.KEYDOWN {
+			app.lastEvent = fmt.Sprintf("KEYDOWN sc=%s key=%s repeat=%d mods=%s",
+				sdl.GetScancodeName(sc), sdl.GetKeyName(sym), e.Repeat, modsString(mods))
+		} else {
+			app.lastEvent = fmt.Sprintf("KEYUP   sc=%s key=%s mods=%s",
+				sdl.GetScancodeName(sc), sdl.GetKeyName(sym), modsString(mods))
+		}
+		if Debug {
+			fmt.Println(app.lastEvent)
+		}
+
+		// Quit (only when not leaping)
+		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
+			return false
+		}
+
+		// Clipboard ops on Ctrl (not Cmd, because Cmd is Leap keys)
+		if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
+			if ctrlHeld {
+				switch sym {
+				case sdl.K_c:
+					ed.CopySelection()
+					return true
+				case sdl.K_x:
+					ed.CutSelection()
+					return true
+				case sdl.K_v:
+					ed.PasteClipboard()
+					return true
+				}
+			}
+		}
+
+		// Leap Again: Ctrl + Cmd (Left or Right) without entering quasimode typing
+		// We trigger on KEYDOWN of LGUI/RGUI while Ctrl is held and leap is NOT active.
+		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
+			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
+			if ctrlHeld {
+				if sc == sdl.SCANCODE_RGUI {
+					ed.LeapAgain(editor.DirFwd)
+					return true
+				}
+				if sc == sdl.SCANCODE_LGUI {
+					ed.LeapAgain(editor.DirBack)
+					return true
+				}
+			}
+		}
+
+		// Track held Cmd state
+		if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+			if sc == sdl.SCANCODE_LGUI {
+				ed.Leap.HeldL = true
+			}
+			if sc == sdl.SCANCODE_RGUI {
+				ed.Leap.HeldR = true
+			}
+		}
+		if e.Type == sdl.KEYUP {
+			if sc == sdl.SCANCODE_LGUI {
+				ed.Leap.HeldL = false
+			}
+			if sc == sdl.SCANCODE_RGUI {
+				ed.Leap.HeldR = false
+			}
+		}
+
+		// Start Leap quasimode when first Cmd goes down (and Ctrl is NOT held)
+		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
+			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
+			if !ctrlHeld {
+				if sc == sdl.SCANCODE_RGUI {
+					ed.LeapStart(editor.DirFwd)
+					return true
+				}
+				if sc == sdl.SCANCODE_LGUI {
+					ed.LeapStart(editor.DirBack)
+					return true
+				}
+			}
+		}
+
+		// While leaping, if the OTHER Cmd is pressed, enable selection mode + anchor
+		if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+			if (sc == sdl.SCANCODE_LGUI && ed.Leap.HeldR) || (sc == sdl.SCANCODE_RGUI && ed.Leap.HeldL) {
+				ed.BeginLeapSelection()
+			}
+		}
+
+		// End Leap when BOTH Cmd keys are up
+		if e.Type == sdl.KEYUP && ed.Leap.Active {
+			if !ed.Leap.HeldL && !ed.Leap.HeldR {
+				ed.LeapEndCommit()
+				return true
+			}
+		}
+
+		// While leaping: lifecycle keys and KEYDOWN fallback for pattern capture
+		if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+			switch sym {
+			case sdl.K_ESCAPE:
+				ed.LeapCancel()
+				return true
+			case sdl.K_BACKSPACE:
+				ed.LeapBackspace()
+				return true
+			case sdl.K_RETURN, sdl.K_KP_ENTER:
+				ed.LeapEndCommit()
+				return true
+			}
+
+			// KEYDOWN fallback capture (Cmd suppresses TEXTINPUT on macOS)
+			if r, ok := keyToRune(sym, mods); ok {
+				ed.Leap.LastSrc = "keydown"
+				ed.LeapAppend(string(r))
+				return true
+			}
+		}
+
+		// Normal editing (outside leap)
+		if !ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+			switch sym {
+			case sdl.K_BACKSPACE:
+				ed.BackspaceOrDeleteSelection(true)
+			case sdl.K_DELETE:
+				ed.BackspaceOrDeleteSelection(false)
+			case sdl.K_LEFT:
+				ed.MoveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
+			case sdl.K_RIGHT:
+				ed.MoveCaret(1, (mods&sdl.KMOD_SHIFT) != 0)
+			case sdl.K_RETURN, sdl.K_KP_ENTER:
+				ed.InsertText("\n")
+			}
+		}
+
+	case *sdl.TextInputEvent:
+		text := textInputString(e)
+		app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
+		if Debug {
+			fmt.Println(app.lastEvent)
+		}
+
+		if text == "" || !utf8.ValidString(text) {
+			return true
+		}
+
+		if ed.Leap.Active {
+			ed.Leap.LastSrc = "textinput"
+			ed.LeapAppend(text)
+		} else {
+			ed.InsertText(text)
+		}
+	}
+
+	return true
 }
 
 // ======================
