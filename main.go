@@ -23,6 +23,7 @@ import (
 )
 
 const Debug = false
+const tabWidth = 4
 
 type sdlClipboard struct{}
 
@@ -1115,16 +1116,17 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		a, b := app.ed.Sel.Normalised()
 		a = clamp(a, 0, len(app.ed.Buf))
 		b = clamp(b, 0, len(app.ed.Buf))
-		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, contentTop, lineH, cellW, selCol, startLine, visibleLines)
+		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, contentTop, lineH, cellW, selCol, startLine, visibleLines, tabWidth)
 	}
 
 	drawn := 0
 	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
 		line := lines[i]
-		drawText(r, font, left, y, line, fg)
+		drawText(r, font, left, y, expandTabs(line, tabWidth), fg)
 
 		if i == cLine && blinkOn {
-			x := left + cCol*cellW
+			cColVis := visualColForRuneCol(line, cCol, tabWidth)
+			x := left + cColVis*cellW
 			w := maxInt(2, min(cellW, lineH-2))
 			hh := lineH - 2
 			r.SetDrawColor(caretCol.R, caretCol.G, caretCol.B, caretCol.A)
@@ -1147,7 +1149,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		rel := fLine - startLine
 		if rel >= 0 && rel < visibleLines {
 			yFound := contentTop + rel*lineH
-			x := left + fCol*cellW
+			x := left + visualColForRuneCol(lines[fLine], fCol, tabWidth)*cellW
 			yy := yFound + lineH - 3
 			r.SetDrawColor(green.R, green.G, green.B, green.A)
 			_ = r.DrawLine(int32(x), int32(yy), int32(x+cellW), int32(yy))
@@ -1157,7 +1159,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	r.Present()
 }
 
-func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color, startLine, visibleLines int) {
+func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color, startLine, visibleLines, tabW int) {
 	aLine, aCol := editor.LineColForPos(lines, a)
 	bLine, bCol := editor.LineColForPos(lines, b)
 
@@ -1171,12 +1173,12 @@ func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, l
 		}
 		y := y0 + (ln-startLine)*lineH
 		startCol := 0
-		endCol := len([]rune(lines[ln]))
+		endCol := visualLen(lines[ln], tabWidth)
 		if ln == aLine {
-			startCol = aCol
+			startCol = visualColForRuneCol(lines[ln], aCol, tabWidth)
 		}
 		if ln == bLine {
-			endCol = bCol
+			endCol = visualColForRuneCol(lines[ln], bCol, tabWidth)
 		}
 		if endCol < startCol {
 			startCol, endCol = endCol, startCol
@@ -1215,6 +1217,54 @@ func drawText(r *sdl.Renderer, font *ttf.Font, x, y int, text string, col sdl.Co
 
 func textInputString(e *sdl.TextInputEvent) string {
 	return C.GoString((*C.char)(unsafe.Pointer(&e.Text[0])))
+}
+
+// expandTabs renders tabs as fixed-width spaces for UI display.
+func expandTabs(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	var sb strings.Builder
+	col := 0
+	for _, r := range s {
+		if r == '\t' {
+			next := ((col / width) + 1) * width
+			for col < next {
+				sb.WriteByte(' ')
+				col++
+			}
+			continue
+		}
+		sb.WriteRune(r)
+		col++
+	}
+	return sb.String()
+}
+
+// visualColForRuneCol converts a rune column to a visual column accounting for tabs.
+func visualColForRuneCol(line string, runeCol, width int) int {
+	if width <= 0 {
+		return runeCol
+	}
+	col := 0
+	vis := 0
+	for _, r := range line {
+		if col >= runeCol {
+			break
+		}
+		if r == '\t' {
+			vis = ((vis / width) + 1) * width
+		} else {
+			vis++
+		}
+		col++
+	}
+	return vis
+}
+
+// visualLen returns the display width of a line with tabs expanded.
+func visualLen(line string, width int) int {
+	return visualColForRuneCol(line, len([]rune(line)), width)
 }
 
 // KEYDOWN fallback capture (US-ish layout) for when Cmd suppresses TEXTINPUT.
