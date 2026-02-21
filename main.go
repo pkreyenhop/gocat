@@ -12,58 +12,25 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"sdl-alt-test/editor"
+
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
 
 const Debug = false
 
-type Dir int
+type sdlClipboard struct{}
 
-const (
-	DirBack Dir = -1
-	DirFwd  Dir = 1
-)
-
-type Sel struct {
-	active bool
-	a      int // inclusive
-	b      int // exclusive-ish in rendering; we normalise anyway
+func (sdlClipboard) GetText() (string, error) {
+	return sdl.GetClipboardText()
+}
+func (sdlClipboard) SetText(text string) error {
+	return sdl.SetClipboardText(text)
 }
 
-func (s Sel) normalised() (int, int) {
-	if !s.active {
-		return 0, 0
-	}
-	if s.a <= s.b {
-		return s.a, s.b
-	}
-	return s.b, s.a
-}
-
-type LeapState struct {
-	active       bool
-	dir          Dir
-	query        []rune
-	originCaret  int
-	lastFoundPos int
-
-	heldL bool
-	heldR bool
-
-	// Selection while both Leap keys are involved
-	selecting  bool
-	selAnchor  int
-	lastSrc    string // "textinput" or "keydown"
-	lastCommit []rune // last committed query for Leap Again
-}
-
-type Editor struct {
-	buf   []rune
-	caret int
-	sel   Sel
-	leap  LeapState
-
+type appState struct {
+	ed        *editor.Editor
 	lastEvent string
 	lastMods  sdl.Keymod
 }
@@ -93,18 +60,18 @@ func main() {
 	font := mustFont(ttf.OpenFont(pickFont(), 18))
 	defer font.Close()
 
-	ed := &Editor{
-		buf: []rune(
-			"B mode implemented:\n" +
-				"- Cmd-only Leap quasimode: hold Right Cmd = forward, hold Left Cmd = back.\n" +
-				"- Dual-Leap selection: hold one Cmd, press the other Cmd to start selection.\n" +
-				"- Leap Again (repeat): Ctrl+RightCmd / Ctrl+LeftCmd uses last committed pattern.\n" +
-				"- Wrap-around when repeating.\n" +
-				"- Ctrl+C/Ctrl+X/Ctrl+V clipboard for selection.\n\n" +
-				"Type some text below. Try leaping for 'Cmd' or 'selection' etc.\n\n",
-		),
-		leap: LeapState{lastFoundPos: -1},
-	}
+	ed := editor.NewEditor(
+		"B mode implemented:\n" +
+			"- Cmd-only Leap quasimode: hold Right Cmd = forward, hold Left Cmd = back.\n" +
+			"- Dual-Leap selection: hold one Cmd, press the other Cmd to start selection.\n" +
+			"- Leap Again (repeat): Ctrl+RightCmd / Ctrl+LeftCmd uses last committed pattern.\n" +
+			"- Wrap-around when repeating.\n" +
+			"- Ctrl+C/Ctrl+X/Ctrl+V clipboard for selection.\n\n" +
+			"Type some text below. Try leaping for 'Cmd' or 'selection' etc.\n\n",
+	)
+	ed.SetClipboard(sdlClipboard{})
+
+	app := appState{ed: ed}
 
 	sdl.StartTextInput()
 	defer sdl.StopTextInput()
@@ -121,22 +88,22 @@ func main() {
 				sc := e.Keysym.Scancode
 				sym := e.Keysym.Sym
 				mods := sdl.GetModState()
-				ed.lastMods = mods
+				app.lastMods = mods
 
 				// Basic event string
 				if e.Type == sdl.KEYDOWN {
-					ed.lastEvent = fmt.Sprintf("KEYDOWN sc=%s key=%s repeat=%d mods=%s",
+					app.lastEvent = fmt.Sprintf("KEYDOWN sc=%s key=%s repeat=%d mods=%s",
 						sdl.GetScancodeName(sc), sdl.GetKeyName(sym), e.Repeat, modsString(mods))
 				} else {
-					ed.lastEvent = fmt.Sprintf("KEYUP   sc=%s key=%s mods=%s",
+					app.lastEvent = fmt.Sprintf("KEYUP   sc=%s key=%s mods=%s",
 						sdl.GetScancodeName(sc), sdl.GetKeyName(sym), modsString(mods))
 				}
 				if Debug {
-					fmt.Println(ed.lastEvent)
+					fmt.Println(app.lastEvent)
 				}
 
 				// Quit (only when not leaping)
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.leap.active {
+				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
 					running = false
 					continue
 				}
@@ -147,13 +114,13 @@ func main() {
 					if ctrlHeld {
 						switch sym {
 						case sdl.K_c:
-							ed.copySelection()
+							ed.CopySelection()
 							continue
 						case sdl.K_x:
-							ed.cutSelection()
+							ed.CutSelection()
 							continue
 						case sdl.K_v:
-							ed.pasteClipboard()
+							ed.PasteClipboard()
 							continue
 						}
 					}
@@ -161,15 +128,15 @@ func main() {
 
 				// Leap Again: Ctrl + Cmd (Left or Right) without entering quasimode typing
 				// We trigger on KEYDOWN of LGUI/RGUI while Ctrl is held and leap is NOT active.
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.leap.active {
+				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
 					ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
 					if ctrlHeld {
 						if sc == sdl.SCANCODE_RGUI {
-							ed.leapAgain(DirFwd)
+							ed.LeapAgain(editor.DirFwd)
 							continue
 						}
 						if sc == sdl.SCANCODE_LGUI {
-							ed.leapAgain(DirBack)
+							ed.LeapAgain(editor.DirBack)
 							continue
 						}
 					}
@@ -178,351 +145,119 @@ func main() {
 				// Track held Cmd state
 				if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
 					if sc == sdl.SCANCODE_LGUI {
-						ed.leap.heldL = true
+						ed.Leap.HeldL = true
 					}
 					if sc == sdl.SCANCODE_RGUI {
-						ed.leap.heldR = true
+						ed.Leap.HeldR = true
 					}
 				}
 				if e.Type == sdl.KEYUP {
 					if sc == sdl.SCANCODE_LGUI {
-						ed.leap.heldL = false
+						ed.Leap.HeldL = false
 					}
 					if sc == sdl.SCANCODE_RGUI {
-						ed.leap.heldR = false
+						ed.Leap.HeldR = false
 					}
 				}
 
 				// Start Leap quasimode when first Cmd goes down (and Ctrl is NOT held)
-				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.leap.active {
+				if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
 					ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
 					if !ctrlHeld {
 						if sc == sdl.SCANCODE_RGUI {
-							ed.leapStart(DirFwd)
+							ed.LeapStart(editor.DirFwd)
 							continue
 						}
 						if sc == sdl.SCANCODE_LGUI {
-							ed.leapStart(DirBack)
+							ed.LeapStart(editor.DirBack)
 							continue
 						}
 					}
 				}
 
 				// While leaping, if the OTHER Cmd is pressed, enable selection mode + anchor
-				if ed.leap.active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-					if (sc == sdl.SCANCODE_LGUI && ed.leap.heldR) || (sc == sdl.SCANCODE_RGUI && ed.leap.heldL) {
-						// We now have both held; start selecting if not already.
-						if !ed.leap.selecting {
-							ed.leap.selecting = true
-							ed.leap.selAnchor = ed.caret
-							ed.sel.active = true
-							ed.sel.a = ed.leap.selAnchor
-							ed.sel.b = ed.caret
-							if Debug {
-								fmt.Printf("SELECTION START anchor=%d\n", ed.leap.selAnchor)
-							}
-						}
+				if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+					if (sc == sdl.SCANCODE_LGUI && ed.Leap.HeldR) || (sc == sdl.SCANCODE_RGUI && ed.Leap.HeldL) {
+						ed.BeginLeapSelection()
 					}
 				}
 
 				// End Leap when BOTH Cmd keys are up
-				if e.Type == sdl.KEYUP && ed.leap.active {
-					if !ed.leap.heldL && !ed.leap.heldR {
-						ed.leapEndCommit()
+				if e.Type == sdl.KEYUP && ed.Leap.Active {
+					if !ed.Leap.HeldL && !ed.Leap.HeldR {
+						ed.LeapEndCommit()
 						continue
 					}
 				}
 
 				// While leaping: lifecycle keys and KEYDOWN fallback for pattern capture
-				if ed.leap.active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+				if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
 					switch sym {
 					case sdl.K_ESCAPE:
-						ed.leapCancel()
+						ed.LeapCancel()
 						continue
 					case sdl.K_BACKSPACE:
-						ed.leapBackspace()
+						ed.LeapBackspace()
 						continue
 					case sdl.K_RETURN, sdl.K_KP_ENTER:
-						ed.leapEndCommit()
+						ed.LeapEndCommit()
 						continue
 					}
 
 					// KEYDOWN fallback capture (Cmd suppresses TEXTINPUT on macOS)
 					if r, ok := keyToRune(sym, mods); ok {
-						ed.leap.lastSrc = "keydown"
-						ed.leapAppend(string(r))
+						ed.Leap.LastSrc = "keydown"
+						ed.LeapAppend(string(r))
 						continue
 					}
 				}
 
 				// Normal editing (outside leap)
-				if !ed.leap.active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
+				if !ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
 					switch sym {
 					case sdl.K_BACKSPACE:
-						ed.backspaceOrDeleteSelection(true)
+						ed.BackspaceOrDeleteSelection(true)
 					case sdl.K_DELETE:
-						ed.backspaceOrDeleteSelection(false)
+						ed.BackspaceOrDeleteSelection(false)
 					case sdl.K_LEFT:
-						ed.moveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
+						ed.MoveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
 					case sdl.K_RIGHT:
-						ed.moveCaret(1, (mods&sdl.KMOD_SHIFT) != 0)
+						ed.MoveCaret(1, (mods&sdl.KMOD_SHIFT) != 0)
 					case sdl.K_RETURN, sdl.K_KP_ENTER:
-						ed.insertText("\n")
+						ed.InsertText("\n")
 					}
 				}
 
 			case *sdl.TextInputEvent:
 				text := textInputString(e)
-				ed.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
+				app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
 				if Debug {
-					fmt.Println(ed.lastEvent)
+					fmt.Println(app.lastEvent)
 				}
 
 				if text == "" || !utf8.ValidString(text) {
 					continue
 				}
 
-				if ed.leap.active {
-					ed.leap.lastSrc = "textinput"
-					ed.leapAppend(text)
+				if ed.Leap.Active {
+					ed.Leap.LastSrc = "textinput"
+					ed.LeapAppend(text)
 				} else {
-					ed.insertText(text)
+					ed.InsertText(text)
 				}
 			}
 		}
 
-		render(ren, win, font, ed)
+		render(ren, win, font, &app)
 		time.Sleep(2 * time.Millisecond)
 	}
-}
-
-// ======================
-// Leap + selection logic
-// ======================
-
-func (e *Editor) leapStart(dir Dir) {
-	e.leap.active = true
-	e.leap.dir = dir
-	e.leap.originCaret = e.caret
-	e.leap.query = e.leap.query[:0]
-	e.leap.lastFoundPos = -1
-	e.leap.selecting = false
-	e.leap.lastSrc = ""
-	// Starting a leap does not clear an existing selection (Cat keeps it until you do something),
-	// but editing will replace it.
-	if Debug {
-		fmt.Printf("LEAP START dir=%v origin=%d\n", dir, e.leap.originCaret)
-	}
-}
-
-func (e *Editor) leapEndCommit() {
-	// Commit: keep caret where it is.
-	// Store query for Leap Again.
-	if len(e.leap.query) > 0 {
-		e.leap.lastCommit = append(e.leap.lastCommit[:0], e.leap.query...)
-	}
-	if Debug {
-		fmt.Printf("LEAP COMMIT caret=%d query=%q lastCommit=%q selecting=%v sel=%v\n",
-			e.caret, string(e.leap.query), string(e.leap.lastCommit), e.leap.selecting, e.sel.active)
-	}
-
-	// If selecting, selection remains active (already tracked).
-	// If not selecting, we leave selection as-is.
-
-	e.leap.active = false
-	e.leap.query = e.leap.query[:0]
-	e.leap.lastFoundPos = -1
-	e.leap.selecting = false
-	e.leap.lastSrc = ""
-}
-
-func (e *Editor) leapCancel() {
-	// Cancel leap: return to origin; also cancel selection that started during this leap.
-	e.caret = e.leap.originCaret
-	if e.leap.selecting {
-		e.sel.active = false
-	}
-	e.leap.active = false
-	e.leap.query = e.leap.query[:0]
-	e.leap.lastFoundPos = -1
-	e.leap.selecting = false
-	e.leap.lastSrc = ""
-	if Debug {
-		fmt.Printf("LEAP CANCEL -> origin=%d\n", e.caret)
-	}
-}
-
-func (e *Editor) leapAppend(text string) {
-	e.leap.query = append(e.leap.query, []rune(text)...)
-	e.leapSearch()
-}
-
-func (e *Editor) leapBackspace() {
-	if len(e.leap.query) == 0 {
-		return
-	}
-	e.leap.query = e.leap.query[:len(e.leap.query)-1]
-	e.leapSearch()
-}
-
-func (e *Editor) leapSearch() {
-	if len(e.leap.query) == 0 {
-		e.caret = e.leap.originCaret
-		e.leap.lastFoundPos = -1
-		if e.leap.selecting {
-			e.updateSelectionWithCaret()
-		}
-		return
-	}
-
-	// Canon Cat feel: refine anchored at origin
-	start := e.leap.originCaret
-
-	if pos, ok := findInDir(e.buf, e.leap.query, start, e.leap.dir, true /*wrap*/); ok {
-		e.caret = pos
-		e.leap.lastFoundPos = pos
-	} else {
-		e.leap.lastFoundPos = -1
-	}
-	if e.leap.selecting {
-		e.updateSelectionWithCaret()
-	}
-}
-
-func (e *Editor) updateSelectionWithCaret() {
-	e.sel.active = true
-	e.sel.a = e.leap.selAnchor
-	e.sel.b = e.caret
-}
-
-func (e *Editor) leapAgain(dir Dir) {
-	if len(e.leap.lastCommit) == 0 {
-		if Debug {
-			fmt.Println("LEAP AGAIN: no lastCommit")
-		}
-		return
-	}
-	q := e.leap.lastCommit
-
-	// Start after/before caret to get "next" behaviour.
-	start := e.caret
-	if dir == DirFwd {
-		start = min(len(e.buf), e.caret+1)
-	} else {
-		start = max(0, e.caret-1)
-	}
-
-	if pos, ok := findInDir(e.buf, q, start, dir, true /*wrap*/); ok {
-		e.caret = pos
-	} else if Debug {
-		fmt.Printf("LEAP AGAIN miss query=%q\n", string(q))
-	}
-}
-
-// ======================
-// Editing + selection
-// ======================
-
-func (e *Editor) insertText(text string) {
-	// Replace selection if active
-	if e.sel.active {
-		e.deleteSelection()
-	}
-	rs := []rune(text)
-	if len(rs) == 0 {
-		return
-	}
-	e.caret = clamp(e.caret, 0, len(e.buf))
-	e.buf = append(e.buf[:e.caret], append(rs, e.buf[e.caret:]...)...)
-	e.caret += len(rs)
-}
-
-func (e *Editor) backspaceOrDeleteSelection(isBackspace bool) {
-	if e.sel.active {
-		e.deleteSelection()
-		return
-	}
-	if len(e.buf) == 0 {
-		return
-	}
-	if isBackspace {
-		if e.caret <= 0 {
-			return
-		}
-		e.buf = append(e.buf[:e.caret-1], e.buf[e.caret:]...)
-		e.caret--
-		return
-	}
-	// delete forward
-	if e.caret >= len(e.buf) {
-		return
-	}
-	e.buf = append(e.buf[:e.caret], e.buf[e.caret+1:]...)
-}
-
-func (e *Editor) deleteSelection() {
-	a, b := e.sel.normalised()
-	a = clamp(a, 0, len(e.buf))
-	b = clamp(b, 0, len(e.buf))
-	if a == b {
-		e.sel.active = false
-		return
-	}
-	e.buf = append(e.buf[:a], e.buf[b:]...)
-	e.caret = a
-	e.sel.active = false
-}
-
-func (e *Editor) moveCaret(delta int, extendSelection bool) {
-	newPos := clamp(e.caret+delta, 0, len(e.buf))
-	if extendSelection {
-		if !e.sel.active {
-			e.sel.active = true
-			e.sel.a = e.caret
-			e.sel.b = newPos
-		} else {
-			e.sel.b = newPos
-		}
-	} else {
-		e.sel.active = false
-	}
-	e.caret = newPos
-}
-
-func (e *Editor) copySelection() {
-	if !e.sel.active {
-		return
-	}
-	a, b := e.sel.normalised()
-	a = clamp(a, 0, len(e.buf))
-	b = clamp(b, 0, len(e.buf))
-	if a == b {
-		return
-	}
-	_ = sdl.SetClipboardText(string(e.buf[a:b]))
-}
-
-func (e *Editor) cutSelection() {
-	if !e.sel.active {
-		return
-	}
-	e.copySelection()
-	e.deleteSelection()
-}
-
-func (e *Editor) pasteClipboard() {
-	txt, err := sdl.GetClipboardText()
-	if err != nil || txt == "" {
-		return
-	}
-	e.insertText(txt)
 }
 
 // ======================
 // Rendering
 // ======================
 
-func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, ed *Editor) {
+func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	_, h32 := win.GetSize()
 	h := int(h32)
 
@@ -542,46 +277,46 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, ed *Editor) {
 	left := 12
 	top := 12
 
-	lines := splitLines(ed.buf)
+	lines := editor.SplitLines(app.ed.Buf)
 
 	// Status lines
-	if ed.leap.active {
+	if app.ed.Leap.Active {
 		col := blue
 		dirArrow := "→"
-		if ed.leap.dir == DirBack {
+		if app.ed.Leap.Dir == editor.DirBack {
 			col = orange
 			dirArrow = "←"
 		}
 		drawText(r, font, left, top,
 			fmt.Sprintf("LEAP %s heldL=%v heldR=%v selecting=%v src=%s query=%q last=%q",
-				dirArrow, ed.leap.heldL, ed.leap.heldR, ed.leap.selecting, ed.leap.lastSrc,
-				string(ed.leap.query), string(ed.leap.lastCommit)),
+				dirArrow, app.ed.Leap.HeldL, app.ed.Leap.HeldR, app.ed.Leap.Selecting, app.ed.Leap.LastSrc,
+				string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit)),
 			col,
 		)
 	} else {
 		drawText(r, font, left, top,
 			fmt.Sprintf("EDIT  (Cmd-only Leap. Ctrl+Cmd = Leap Again. Ctrl+C/X/V clipboard)  last=%q",
-				string(ed.leap.lastCommit)),
+				string(app.ed.Leap.LastCommit)),
 			dim,
 		)
 	}
-	drawText(r, font, left, top+lineH+2, ed.lastEvent, dim)
+	drawText(r, font, left, top+lineH+2, app.lastEvent, dim)
 
 	// Text start
 	y0 := top + (lineH * 2) + 12
 	y := y0
 
 	// Draw selection background (monospace-based)
-	if ed.sel.active {
-		a, b := ed.sel.normalised()
-		a = clamp(a, 0, len(ed.buf))
-		b = clamp(b, 0, len(ed.buf))
-		drawSelectionRects(r, lines, ed.buf, a, b, left, y0, lineH, cellW, selCol)
+	if app.ed.Sel.Active {
+		a, b := app.ed.Sel.Normalised()
+		a = clamp(a, 0, len(app.ed.Buf))
+		b = clamp(b, 0, len(app.ed.Buf))
+		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, y0, lineH, cellW, selCol)
 	}
 
 	// Caret position in line/col space
-	cLine := caretLineAt(lines, ed.caret)
-	cCol := caretColAt(lines, ed.caret)
+	cLine := editor.CaretLineAt(lines, app.ed.Caret)
+	cCol := editor.CaretColAt(lines, app.ed.Caret)
 
 	for i, line := range lines {
 		drawText(r, font, left, y, line, fg)
@@ -599,9 +334,9 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, ed *Editor) {
 	}
 
 	// underline found position while leaping
-	if ed.leap.active && ed.leap.lastFoundPos >= 0 {
-		fLine := caretLineAt(lines, ed.leap.lastFoundPos)
-		fCol := caretColAt(lines, ed.leap.lastFoundPos)
+	if app.ed.Leap.Active && app.ed.Leap.LastFoundPos >= 0 {
+		fLine := editor.CaretLineAt(lines, app.ed.Leap.LastFoundPos)
+		fCol := editor.CaretColAt(lines, app.ed.Leap.LastFoundPos)
 		yFound := y0 + fLine*lineH
 		if yFound >= top && yFound <= h-60 {
 			x := left + fCol*cellW
@@ -615,8 +350,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, ed *Editor) {
 }
 
 func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color) {
-	aLine, aCol := lineColForPos(lines, a)
-	bLine, bCol := lineColForPos(lines, b)
+	aLine, aCol := editor.LineColForPos(lines, a)
+	bLine, bCol := editor.LineColForPos(lines, b)
 
 	r.SetDrawColor(col.R, col.G, col.B, col.A)
 
@@ -626,7 +361,7 @@ func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, l
 		if x2 < x1 {
 			x1, x2 = x2, x1
 		}
-		_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(max(2, x2-x1)), H: int32(lineH)})
+		_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
 		return
 	}
 
@@ -634,18 +369,18 @@ func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, l
 	firstLen := len([]rune(lines[aLine]))
 	x1 := left + aCol*cellW
 	x2 := left + firstLen*cellW
-	_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(max(2, x2-x1)), H: int32(lineH)})
+	_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y0 + aLine*lineH), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
 
 	// Middle full lines
 	for ln := aLine + 1; ln < bLine; ln++ {
 		lineLen := len([]rune(lines[ln]))
-		_ = r.FillRect(&sdl.Rect{X: int32(left), Y: int32(y0 + ln*lineH), W: int32(max(2, lineLen*cellW)), H: int32(lineH)})
+		_ = r.FillRect(&sdl.Rect{X: int32(left), Y: int32(y0 + ln*lineH), W: int32(maxInt(2, lineLen*cellW)), H: int32(lineH)})
 	}
 
 	// Last line: from start to bCol
 	x3 := left
 	x4 := left + bCol*cellW
-	_ = r.FillRect(&sdl.Rect{X: int32(x3), Y: int32(y0 + bLine*lineH), W: int32(max(2, x4-x3)), H: int32(lineH)})
+	_ = r.FillRect(&sdl.Rect{X: int32(x3), Y: int32(y0 + bLine*lineH), W: int32(maxInt(2, x4-x3)), H: int32(lineH)})
 
 	_ = buf // keep signature stable if you later want buffer-aware selection
 }
@@ -668,121 +403,6 @@ func drawText(r *sdl.Renderer, font *ttf.Font, x, y int, text string, col sdl.Co
 
 	dst := sdl.Rect{X: int32(x), Y: int32(y), W: surf.W, H: surf.H}
 	_ = r.Copy(tex, nil, &dst)
-}
-
-// ======================
-// Line/col mapping
-// ======================
-
-func splitLines(buf []rune) []string {
-	lines := make([]string, 0, 64)
-	var cur []rune
-	for _, r := range buf {
-		if r == '\n' {
-			lines = append(lines, string(cur))
-			cur = cur[:0]
-			continue
-		}
-		cur = append(cur, r)
-	}
-	lines = append(lines, string(cur))
-	return lines
-}
-
-// Convert a buffer position to (line, col) assuming lines from splitLines.
-func lineColForPos(lines []string, pos int) (int, int) {
-	if pos <= 0 {
-		return 0, 0
-	}
-	p := 0
-	for i, line := range lines {
-		l := len([]rune(line))
-		if pos <= p+l {
-			return i, pos - p
-		}
-		p += l + 1
-	}
-	// end
-	if len(lines) == 0 {
-		return 0, 0
-	}
-	last := len(lines) - 1
-	return last, len([]rune(lines[last]))
-}
-
-func caretLineAt(lines []string, caret int) int {
-	ln, _ := lineColForPos(lines, caret)
-	return ln
-}
-
-func caretColAt(lines []string, caret int) int {
-	_, col := lineColForPos(lines, caret)
-	return col
-}
-
-// ======================
-// Search
-// ======================
-
-func findInDir(hay []rune, needle []rune, start int, dir Dir, wrap bool) (int, bool) {
-	if len(needle) == 0 {
-		return start, true
-	}
-	if len(hay) == 0 || len(needle) > len(hay) {
-		return -1, false
-	}
-	start = clamp(start, 0, len(hay))
-
-	if dir == DirFwd {
-		if pos, ok := scanFwd(hay, needle, start); ok {
-			return pos, true
-		}
-		if wrap {
-			return scanFwd(hay, needle, 0)
-		}
-		return -1, false
-	}
-
-	// backward
-	searchStart := start - 1 // search strictly before start to get the previous match
-	if pos, ok := scanBack(hay, needle, searchStart); ok {
-		return pos, true
-	}
-	if wrap {
-		return scanBack(hay, needle, len(hay))
-	}
-	return -1, false
-}
-
-func scanFwd(hay, needle []rune, start int) (int, bool) {
-	for i := start; i+len(needle) <= len(hay); i++ {
-		if matchAt(hay, needle, i) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func scanBack(hay, needle []rune, start int) (int, bool) {
-	if start < 0 {
-		return -1, false
-	}
-	lastStart := min(start, len(hay)-len(needle))
-	for i := lastStart; i >= 0; i-- {
-		if matchAt(hay, needle, i) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func matchAt(hay, needle []rune, i int) bool {
-	for j := 0; j < len(needle); j++ {
-		if hay[i+j] != needle[j] {
-			return false
-		}
-	}
-	return true
 }
 
 // ======================
@@ -931,6 +551,14 @@ func mustFont(f *ttf.Font, err error) *ttf.Font {
 	}
 	return f
 }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -939,16 +567,4 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

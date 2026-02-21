@@ -18,3 +18,16 @@ Requires Go 1.25.5 (per `go.mod`) and SDL2/SDL2_ttf libraries available to CGO (
 ```sh
 go run .
 ```
+
+## Testing and Structure
+
+- Headless logic lives in `editor/` (no SDL dependency). Run unit tests with `go test ./editor`.
+- The SDL driver is in `main.go` and uses `editor.Editor` for all buffer/leap operations.
+- Tests in `editor/editor_logic_test.go` use a small fixture helper (`run(t, buf, caret, func(*fixture))`) so new behaviour specs stay terse and UI-free.
+
+## SDL UI Driver (`main.go`)
+
+- Boots SDL2/SDL2_ttf, opens a resizable window, and loads a mono font from common system paths (falls back to `DejaVuSansMono.ttf` beside the binary).
+- Creates an `editor.Editor`, injects an SDL-backed clipboard, and enters an event loop that maps Cmd+typing into Leap, dual-Cmd selection, Ctrl+Cmd “Leap Again,” Ctrl+C/X/V clipboard, and plain text/caret edits when Leap is inactive.
+- Captures text via `TEXTINPUT` events (with KEYDOWN fallback when Cmd suppresses them on macOS) and records the last event/modifiers for on-screen debugging.
+- Renders the buffer with a status line showing mode/query, draws the caret and selection rectangles using monospace cell metrics, and underlines the current match during an active Leap.
