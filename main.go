@@ -30,15 +30,16 @@ func (sdlClipboard) SetText(text string) error {
 }
 
 type appState struct {
-	ed        *editor.Editor
-	lastEvent string
-	lastMods  sdl.Keymod
-	blinkAt   time.Time
-	win       *sdl.Window
-	lastW     int
-	lastH     int
-	lastX     int32
-	lastY     int32
+	ed          *editor.Editor
+	lastEvent   string
+	lastMods    sdl.Keymod
+	blinkAt     time.Time
+	win         *sdl.Window
+	lastW       int
+	lastH       int
+	lastX       int32
+	lastY       int32
+	currentPath string
 }
 
 func main() {
@@ -159,6 +160,22 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
 			if ctrlHeld {
 				switch sym {
+				case sdl.K_q:
+					return false
+				case sdl.K_w:
+					if err := saveCurrent(app); err != nil {
+						app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
+					} else {
+						app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
+					}
+					return true
+				case sdl.K_o:
+					if err := openCurrent(app); err != nil {
+						app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
+					} else {
+						app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
+					}
+					return true
 				case sdl.K_c:
 					ed.CopySelection()
 					return true
@@ -332,6 +349,42 @@ func endLeapGrab(app *appState) {
 	}
 	app.win.SetKeyboardGrab(false)
 	app.win.SetAlwaysOnTop(false)
+}
+
+// ======================
+// File helpers (very simple)
+// ======================
+
+func saveCurrent(app *appState) error {
+	if app == nil || app.ed == nil {
+		return fmt.Errorf("no editor to save")
+	}
+	path := app.currentPath
+	if path == "" {
+		path = "leap.txt"
+		app.currentPath = path
+	}
+	return os.WriteFile(path, []byte(string(app.ed.Buf)), 0644)
+}
+
+func openCurrent(app *appState) error {
+	if app == nil || app.ed == nil {
+		return fmt.Errorf("no editor to open into")
+	}
+	path := app.currentPath
+	if path == "" {
+		path = "leap.txt"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	app.currentPath = path
+	app.ed.Buf = []rune(string(data))
+	app.ed.Caret = 0
+	app.ed.Sel = editor.Sel{}
+	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
+	return nil
 }
 
 // ======================
