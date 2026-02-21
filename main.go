@@ -33,6 +33,7 @@ type appState struct {
 	ed        *editor.Editor
 	lastEvent string
 	lastMods  sdl.Keymod
+	blinkAt   time.Time
 }
 
 func main() {
@@ -71,7 +72,7 @@ func main() {
 	)
 	ed.SetClipboard(sdlClipboard{})
 
-	app := appState{ed: ed}
+	app := appState{ed: ed, blinkAt: time.Now()}
 
 	sdl.StartTextInput()
 	defer sdl.StopTextInput()
@@ -105,6 +106,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 		return false
 
 	case *sdl.KeyboardEvent:
+		app.blinkAt = time.Now()
 		sc := e.Keysym.Scancode
 		sym := e.Keysym.Sym
 		mods := sdl.GetModState()
@@ -248,6 +250,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 		}
 
 	case *sdl.TextInputEvent:
+		app.blinkAt = time.Now()
 		text := textInputString(e)
 		app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
 		if Debug {
@@ -284,6 +287,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	blue := sdl.Color{R: 120, G: 170, B: 255, A: 255}
 	orange := sdl.Color{R: 255, G: 170, B: 120, A: 255}
 	selCol := sdl.Color{R: 60, G: 90, B: 140, A: 255}
+	caretCol := sdl.Color{R: 255, G: 255, B: 180, A: 255}
 
 	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	r.Clear()
@@ -292,6 +296,16 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	lineH := font.Height() + 4
 	left := 12
 	top := 12
+
+	// Blink caret: visible for 650ms, hidden for 350ms. Reset on input.
+	blinkOn := true
+	if app.blinkAt.IsZero() {
+		app.blinkAt = time.Now()
+	}
+	elapsedMs := time.Since(app.blinkAt).Milliseconds()
+	if elapsedMs%1000 >= 650 {
+		blinkOn = false
+	}
 
 	lines := editor.SplitLines(app.ed.Buf)
 
@@ -337,10 +351,16 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	for i, line := range lines {
 		drawText(r, font, left, y, line, fg)
 
-		if i == cLine {
+		if i == cLine && blinkOn {
 			x := left + cCol*cellW
-			r.SetDrawColor(255, 255, 255, 255)
-			_ = r.DrawLine(int32(x), int32(y), int32(x), int32(y+lineH-2))
+			w := maxInt(2, cellW/3)
+			r.SetDrawColor(caretCol.R, caretCol.G, caretCol.B, caretCol.A)
+			_ = r.FillRect(&sdl.Rect{
+				X: int32(x),
+				Y: int32(y),
+				W: int32(w),
+				H: int32(lineH - 2),
+			})
 		}
 
 		y += lineH
