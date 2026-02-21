@@ -8,6 +8,8 @@ import "C"
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -40,6 +42,14 @@ type appState struct {
 	lastX       int32
 	lastY       int32
 	currentPath string
+	openRoot    string
+	open        openPrompt
+}
+
+type openPrompt struct {
+	Active  bool
+	Query   string
+	Matches []string
 }
 
 func main() {
@@ -82,14 +92,16 @@ func main() {
 
 	wW, wH := win.GetSize()
 	wX, wY := win.GetPosition()
+	root, _ := os.Getwd()
 	app := appState{
-		ed:      ed,
-		blinkAt: time.Now(),
-		win:     win,
-		lastW:   int(wW),
-		lastH:   int(wH),
-		lastX:   wX,
-		lastY:   wY,
+		ed:       ed,
+		blinkAt:  time.Now(),
+		win:      win,
+		lastW:    int(wW),
+		lastH:    int(wH),
+		lastX:    wX,
+		lastY:    wY,
+		openRoot: root,
 	}
 
 	sdl.StartTextInput()
@@ -113,6 +125,11 @@ func main() {
 // It returns false when the app should quit.
 func handleEvent(app *appState, ev sdl.Event) bool {
 	ed := app.ed
+
+	// Modal open prompt takes precedence over other input
+	if app.open.Active {
+		return handleOpenEvent(app, ev)
+	}
 
 	switch e := ev.(type) {
 
@@ -155,7 +172,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			return false
 		}
 
-		// Clipboard ops on Ctrl (not Cmd, because Cmd is Leap keys)
+		// Clipboard + file ops on Ctrl (not Cmd, because Cmd is Leap keys)
 		if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
 			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
 			if ctrlHeld {
@@ -170,11 +187,10 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					}
 					return true
 				case sdl.K_o:
-					if err := openCurrent(app); err != nil {
-						app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
-					} else {
-						app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
-					}
+					app.open.Active = true
+					app.open.Query = ""
+					app.open.Matches = nil
+					app.lastEvent = "OPEN: type pattern, Enter opens if single match, Esc cancels"
 					return true
 				case sdl.K_c:
 					ed.CopySelection()
@@ -319,6 +335,55 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 	return true
 }
 
+func handleOpenEvent(app *appState, ev sdl.Event) bool {
+	switch e := ev.(type) {
+	case *sdl.KeyboardEvent:
+		if e.Type != sdl.KEYDOWN || e.Repeat != 0 {
+			return true
+		}
+		switch e.Keysym.Sym {
+		case sdl.K_ESCAPE:
+			app.open.Active = false
+			app.lastEvent = "Open cancelled"
+			return true
+		case sdl.K_BACKSPACE:
+			if len(app.open.Query) > 0 {
+				rs := []rune(app.open.Query)
+				app.open.Query = string(rs[:len(rs)-1])
+				app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
+			}
+			return true
+		case sdl.K_RETURN, sdl.K_KP_ENTER:
+			app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
+			if len(app.open.Matches) == 1 {
+				if err := openPath(app, app.open.Matches[0]); err != nil {
+					app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
+				} else {
+					app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
+				}
+				app.open.Active = false
+			} else {
+				app.lastEvent = fmt.Sprintf("OPEN: %d matches; refine", len(app.open.Matches))
+			}
+			return true
+		default:
+			if r, ok := keyToRune(e.Keysym.Sym, sdl.Keymod(e.Keysym.Mod)); ok {
+				app.open.Query += string(r)
+				app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
+			}
+			return true
+		}
+	case *sdl.TextInputEvent:
+		text := textInputString(e)
+		if text != "" && utf8.ValidString(text) {
+			app.open.Query += text
+			app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
+		}
+		return true
+	}
+	return true
+}
+
 func restoreWindow(app *appState) {
 	if app.win == nil {
 		return
@@ -375,9 +440,19 @@ func openCurrent(app *appState) error {
 	if path == "" {
 		path = "leap.txt"
 	}
+	return openPath(app, path)
+}
+
+func openPath(app *appState, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	// Only files under openRoot are allowed.
+	if app.openRoot != "" {
+		if rel, err := filepath.Rel(app.openRoot, path); err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("refusing to open outside %s", app.openRoot)
+		}
 	}
 	app.currentPath = path
 	app.ed.Buf = []rune(string(data))
@@ -385,6 +460,42 @@ func openCurrent(app *appState) error {
 	app.ed.Sel = editor.Sel{}
 	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
 	return nil
+}
+
+// findMatches searches for files under root whose basename contains query (case-insensitive).
+// It skips hidden directories and stops after limit hits.
+func findMatches(root, query string, limit int) []string {
+	if query == "" {
+		return nil
+	}
+	lq := strings.ToLower(query)
+	matches := make([]string, 0, 8)
+	errStop := fmt.Errorf("stop")
+
+	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if len(matches) >= limit {
+			return errStop
+		}
+		if d.IsDir() {
+			base := d.Name()
+			if strings.HasPrefix(base, ".") || base == "vendor" {
+				if path == root {
+					return nil
+				}
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		base := strings.ToLower(d.Name())
+		if strings.Contains(base, lq) {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches
 }
 
 // ======================
@@ -433,7 +544,13 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	lines := editor.SplitLines(app.ed.Buf)
 
 	// Status lines
-	if app.ed.Leap.Active {
+	if app.open.Active {
+		drawText(r, font, left, top,
+			fmt.Sprintf("OPEN query=%q matches=%d (Enter opens if single, Esc cancels)",
+				app.open.Query, len(app.open.Matches)),
+			blue,
+		)
+	} else if app.ed.Leap.Active {
 		col := blue
 		dirArrow := "→"
 		if app.ed.Leap.Dir == editor.DirBack {
