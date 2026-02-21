@@ -1,3 +1,4 @@
+// Package editor provides headless editing and Canon-Cat-inspired Leap logic.
 package editor
 
 // Core editing and Leap logic. This package is UI-agnostic to keep logic testable.
@@ -9,6 +10,7 @@ const (
 	DirFwd  Dir = 1
 )
 
+// Sel represents a selection range.
 type Sel struct {
 	Active bool
 	A      int // inclusive
@@ -48,6 +50,7 @@ type Clipboard interface {
 	SetText(string) error
 }
 
+// Editor holds buffer state, caret/selection, Leap state, and clipboard.
 type Editor struct {
 	Buf   []rune
 	Caret int
@@ -55,6 +58,13 @@ type Editor struct {
 	Leap  LeapState
 
 	clip Clipboard
+	undo []undoState
+}
+
+type undoState struct {
+	buf   []rune
+	caret int
+	sel   Sel
 }
 
 func NewEditor(initial string) *Editor {
@@ -64,6 +74,7 @@ func NewEditor(initial string) *Editor {
 	}
 }
 
+// SetClipboard injects a clipboard implementation.
 func (e *Editor) SetClipboard(c Clipboard) {
 	e.clip = c
 }
@@ -193,6 +204,7 @@ func (e *Editor) LeapAgain(dir Dir) {
 
 func (e *Editor) InsertText(text string) {
 	// Replace selection if active
+	e.recordUndo()
 	if e.Sel.Active {
 		e.deleteSelection()
 	}
@@ -206,6 +218,7 @@ func (e *Editor) InsertText(text string) {
 }
 
 func (e *Editor) BackspaceOrDeleteSelection(isBackspace bool) {
+	e.recordUndo()
 	if e.Sel.Active {
 		e.deleteSelection()
 		return
@@ -241,6 +254,31 @@ func (e *Editor) deleteSelection() {
 	e.Sel.Active = false
 }
 
+// Undo restores the most recent recorded state (single-step).
+func (e *Editor) Undo() {
+	if len(e.undo) == 0 {
+		return
+	}
+	last := e.undo[len(e.undo)-1]
+	e.undo = e.undo[:len(e.undo)-1]
+	e.Buf = append([]rune(nil), last.buf...)
+	e.Caret = last.caret
+	e.Sel = last.sel
+	e.Leap = LeapState{LastFoundPos: -1}
+}
+
+func (e *Editor) recordUndo() {
+	snap := undoState{
+		buf:   append([]rune(nil), e.Buf...),
+		caret: e.Caret,
+		sel:   e.Sel,
+	}
+	e.undo = append(e.undo, snap)
+	if len(e.undo) > 256 {
+		e.undo = e.undo[len(e.undo)-256:]
+	}
+}
+
 func (e *Editor) MoveCaret(delta int, extendSelection bool) {
 	newPos := clamp(e.Caret+delta, 0, len(e.Buf))
 	if extendSelection {
@@ -257,6 +295,131 @@ func (e *Editor) MoveCaret(delta int, extendSelection bool) {
 	e.Caret = newPos
 }
 
+// MoveCaretLine moves caret by whole lines using a line/col mapping.
+func (e *Editor) MoveCaretLine(lines []string, deltaLines int, extendSelection bool) {
+	if deltaLines == 0 {
+		return
+	}
+	curLine, curCol := LineColForPos(lines, e.Caret)
+	targetLine := clamp(curLine+deltaLines, 0, len(lines)-1)
+	// Clamp col to target line length
+	targetCol := curCol
+	if targetCol > len([]rune(lines[targetLine])) {
+		targetCol = len([]rune(lines[targetLine]))
+	}
+
+	// Compute new caret absolute position
+	pos := 0
+	for i := 0; i < targetLine; i++ {
+		pos += len([]rune(lines[i])) + 1 // include newline
+	}
+	pos += targetCol
+
+	if extendSelection {
+		if !e.Sel.Active {
+			e.Sel.Active = true
+			e.Sel.A = e.Caret
+			e.Sel.B = pos
+		} else {
+			e.Sel.B = pos
+		}
+	} else {
+		e.Sel.Active = false
+	}
+	e.Caret = pos
+}
+
+// MoveCaretPage moves by a page worth of lines (positive for down, negative for up).
+func (e *Editor) MoveCaretPage(lines []string, pageLines int, dir Dir, extendSelection bool) {
+	if pageLines <= 0 {
+		return
+	}
+	delta := pageLines
+	if dir == DirBack {
+		delta = -pageLines
+	}
+	e.MoveCaretLine(lines, delta, extendSelection)
+}
+
+// CaretToLineEdge moves caret to start or end of the current line.
+func (e *Editor) CaretToLineEdge(lines []string, toEnd bool, extendSelection bool) {
+	lineIdx, _ := LineColForPos(lines, e.Caret)
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return
+	}
+	targetCol := 0
+	if toEnd {
+		targetCol = len([]rune(lines[lineIdx]))
+	}
+	e.moveCaretTo(lineIdx, targetCol, lines, extendSelection)
+}
+
+// CaretToBufferEdge moves caret to start or end of buffer.
+func (e *Editor) CaretToBufferEdge(lines []string, toEnd bool, extendSelection bool) {
+	if len(lines) == 0 {
+		return
+	}
+	targetLine := 0
+	targetCol := 0
+	if toEnd {
+		targetLine = len(lines) - 1
+		targetCol = len([]rune(lines[targetLine]))
+	}
+	e.moveCaretTo(targetLine, targetCol, lines, extendSelection)
+}
+
+func (e *Editor) moveCaretTo(lineIdx int, col int, lines []string, extendSelection bool) {
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineIdx >= len(lines) {
+		lineIdx = len(lines) - 1
+	}
+	pos := 0
+	for i := 0; i < lineIdx; i++ {
+		pos += len([]rune(lines[i])) + 1
+	}
+	pos += col
+
+	if extendSelection {
+		if !e.Sel.Active {
+			e.Sel.Active = true
+			e.Sel.A = e.Caret
+			e.Sel.B = pos
+		} else {
+			e.Sel.B = pos
+		}
+	} else {
+		e.Sel.Active = false
+	}
+	e.Caret = pos
+}
+
+// KillToLineEnd deletes from caret to end-of-line (including newline if at EOL).
+func (e *Editor) KillToLineEnd(lines []string) {
+	e.recordUndo()
+	lineIdx, col := LineColForPos(lines, e.Caret)
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return
+	}
+	lineLen := len([]rune(lines[lineIdx]))
+	// At end of last line: nothing to kill.
+	if lineIdx == len(lines)-1 && col == lineLen {
+		e.Sel.Active = false
+		return
+	}
+	pos := e.Caret
+	target := pos + (lineLen - col)
+	// Remove newline too if we're not on the last line.
+	if lineIdx < len(lines)-1 {
+		target++
+	}
+	if target > pos && target <= len(e.Buf) {
+		e.Buf = append(e.Buf[:pos], e.Buf[target:]...)
+	}
+	e.Sel.Active = false
+}
+
 func (e *Editor) CopySelection() {
 	if !e.Sel.Active || e.clip == nil {
 		return
@@ -271,6 +434,7 @@ func (e *Editor) CopySelection() {
 }
 
 func (e *Editor) CutSelection() {
+	e.recordUndo()
 	if !e.Sel.Active || e.clip == nil {
 		return
 	}
@@ -293,6 +457,7 @@ func (e *Editor) PasteClipboard() {
 // Line/col mapping
 // ======================
 
+// SplitLines splits a rune buffer into lines separated by '\n'.
 func SplitLines(buf []rune) []string {
 	lines := make([]string, 0, 64)
 	var cur []rune
@@ -308,7 +473,7 @@ func SplitLines(buf []rune) []string {
 	return lines
 }
 
-// Convert a buffer position to (line, col) assuming lines from splitLines.
+// LineColForPos converts a buffer position to (line, col) assuming lines from SplitLines.
 func LineColForPos(lines []string, pos int) (int, int) {
 	if pos <= 0 {
 		return 0, 0
@@ -343,6 +508,7 @@ func CaretColAt(lines []string, caret int) int {
 // Search
 // ======================
 
+// FindInDir searches for needle starting near start in the given direction, optionally wrapping.
 func FindInDir(hay []rune, needle []rune, start int, dir Dir, wrap bool) (int, bool) {
 	if len(needle) == 0 {
 		return start, true

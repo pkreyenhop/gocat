@@ -43,9 +43,9 @@ func TestRenderSmoke(t *testing.T) {
 	defer font.Close()
 
 	app := appState{
-		ed:        editor.NewEditor("gui test\nsecond line"),
 		lastEvent: "test",
 	}
+	app.initBuffers(editor.NewEditor("gui test\nsecond line"))
 	render(ren, win, font, &app)
 }
 
@@ -60,9 +60,8 @@ func TestLeapKeydownCapture(t *testing.T) {
 	}
 	defer sdl.Quit()
 
-	app := appState{
-		ed: editor.NewEditor("xxhxx"),
-	}
+	app := appState{}
+	app.initBuffers(editor.NewEditor("xxhxx"))
 
 	// Press Cmd (RGUI) to start leap
 	sdl.SetModState(sdl.KMOD_RGUI)
@@ -126,7 +125,8 @@ func TestLeapCmdQDoesNotQuit(t *testing.T) {
 	}
 	defer sdl.Quit()
 
-	app := appState{ed: editor.NewEditor("qq hello")}
+	app := appState{}
+	app.initBuffers(editor.NewEditor("qq hello"))
 
 	// Start leap with Cmd
 	sdl.SetModState(sdl.KMOD_RGUI)
@@ -182,7 +182,8 @@ func TestLeapCmdHDoesNotHide(t *testing.T) {
 	}
 	defer sdl.Quit()
 
-	app := appState{ed: editor.NewEditor("hhhat")}
+	app := appState{}
+	app.initBuffers(editor.NewEditor("hhhat"))
 
 	sdl.SetModState(sdl.KMOD_RGUI)
 	handleEvent(&app, &sdl.KeyboardEvent{
@@ -229,7 +230,8 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 	}
 	defer win.Destroy()
 
-	app := appState{ed: editor.NewEditor("mmm"), win: win, lastW: 200, lastH: 100}
+	app := appState{win: win, lastW: 200, lastH: 100}
+	app.initBuffers(editor.NewEditor("mmm"))
 
 	sdl.SetModState(sdl.KMOD_RGUI)
 	handleEvent(&app, &sdl.KeyboardEvent{
@@ -286,5 +288,30 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 	})
 	if flags := win.GetFlags(); flags&sdl.WINDOW_ALWAYS_ON_TOP != 0 {
 		t.Fatalf("window stayed always-on-top after leap ended (flags=%x)", flags)
+	}
+}
+
+// ESC while a selection exists should clear the selection and keep running.
+func TestEscapeClearsSelectionInUi(t *testing.T) {
+	_ = os.Setenv("SDL_VIDEODRIVER", "dummy")
+	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
+		t.Skipf("skip: SDL init failed (%v)", err)
+	}
+	defer sdl.Quit()
+
+	app := appState{}
+	app.initBuffers(editor.NewEditor("abc"))
+	app.ed.Sel.Active = true
+	app.ed.Sel.A, app.ed.Sel.B = 0, 3
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_ESCAPE},
+	}) {
+		t.Fatal("escape should not quit when clearing selection")
+	}
+	if app.ed.Sel.Active {
+		t.Fatal("selection should be cleared by escape in UI path")
 	}
 }
