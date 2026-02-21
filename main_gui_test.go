@@ -268,3 +268,10 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 		t.Fatalf("window remained minimized after handling Cmd+M (flags=%x)", flags)
 	}
 }
+
+// Known failure: On macOS the OS may still minimize briefly on Cmd+M even
+// during Leap. This test documents the desired behaviour (no minimization
+// occurs at all). It currently fails to reflect the bug.
+func TestLeapCmdMDoesNotMinimizeAtAll(t *testing.T) {
+	t.Fatalf("TODO: Cmd+M still minimizes briefly in the real app; prevent minimize before it happens")
+}
