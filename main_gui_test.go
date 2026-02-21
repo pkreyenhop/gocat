@@ -262,4 +262,9 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 	if int(w) != 200 || int(h) != 100 {
 		t.Fatalf("window size changed after minimize handling: got %dx%d", w, h)
 	}
+
+	flags := win.GetFlags()
+	if flags&sdl.WINDOW_MINIMIZED != 0 {
+		t.Fatalf("window remained minimized after handling Cmd+M (flags=%x)", flags)
+	}
 }

@@ -210,10 +210,12 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			if !ctrlHeld {
 				if sc == sdl.SCANCODE_RGUI {
 					ed.LeapStart(editor.DirFwd)
+					beginLeapGrab(app)
 					return true
 				}
 				if sc == sdl.SCANCODE_LGUI {
 					ed.LeapStart(editor.DirBack)
+					beginLeapGrab(app)
 					return true
 				}
 			}
@@ -230,6 +232,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 		if e.Type == sdl.KEYUP && ed.Leap.Active {
 			if !ed.Leap.HeldL && !ed.Leap.HeldR {
 				ed.LeapEndCommit()
+				endLeapGrab(app)
 				return true
 			}
 		}
@@ -239,12 +242,14 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			switch sym {
 			case sdl.K_ESCAPE:
 				ed.LeapCancel()
+				endLeapGrab(app)
 				return true
 			case sdl.K_BACKSPACE:
 				ed.LeapBackspace()
 				return true
 			case sdl.K_RETURN, sdl.K_KP_ENTER:
 				ed.LeapEndCommit()
+				endLeapGrab(app)
 				return true
 			}
 
@@ -308,6 +313,21 @@ func restoreWindow(app *appState) {
 		app.win.SetPosition(app.lastX, app.lastY)
 	}
 	app.win.Raise()
+}
+
+func beginLeapGrab(app *appState) {
+	if app.win == nil {
+		return
+	}
+	app.win.SetKeyboardGrab(true)
+	app.win.Raise()
+}
+
+func endLeapGrab(app *appState) {
+	if app.win == nil {
+		return
+	}
+	app.win.SetKeyboardGrab(false)
 }
 
 // ======================
