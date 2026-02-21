@@ -35,6 +35,10 @@ type appState struct {
 	lastMods  sdl.Keymod
 	blinkAt   time.Time
 	win       *sdl.Window
+	lastW     int
+	lastH     int
+	lastX     int32
+	lastY     int32
 }
 
 func main() {
@@ -73,7 +77,17 @@ func main() {
 	)
 	ed.SetClipboard(sdlClipboard{})
 
-	app := appState{ed: ed, blinkAt: time.Now(), win: win}
+	wW, wH := win.GetSize()
+	wX, wY := win.GetPosition()
+	app := appState{
+		ed:      ed,
+		blinkAt: time.Now(),
+		win:     win,
+		lastW:   int(wW),
+		lastH:   int(wH),
+		lastX:   wX,
+		lastY:   wY,
+	}
 
 	sdl.StartTextInput()
 	defer sdl.StopTextInput()
@@ -109,8 +123,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 	case *sdl.WindowEvent:
 		// Avoid minimizing/hiding the window from system combos during Leap; restore it.
 		if (e.Event == sdl.WINDOWEVENT_MINIMIZED || e.Event == sdl.WINDOWEVENT_HIDDEN) && app.win != nil {
-			app.win.Restore()
-			app.win.Raise()
+			restoreWindow(app)
 			return true
 		}
 		return true
@@ -282,6 +295,21 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 	return true
 }
 
+func restoreWindow(app *appState) {
+	if app.win == nil {
+		return
+	}
+	app.win.Restore()
+	app.win.Show()
+	if app.lastW > 0 && app.lastH > 0 {
+		app.win.SetSize(int32(app.lastW), int32(app.lastH))
+	}
+	if app.lastX != 0 || app.lastY != 0 {
+		app.win.SetPosition(app.lastX, app.lastY)
+	}
+	app.win.Raise()
+}
+
 // ======================
 // Rendering
 // ======================
@@ -289,6 +317,14 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	_, h32 := win.GetSize()
 	h := int(h32)
+	if app != nil && app.win != nil {
+		x, y := win.GetPosition()
+		w, hh := win.GetSize()
+		app.lastX = x
+		app.lastY = y
+		app.lastW = int(w)
+		app.lastH = int(hh)
+	}
 
 	bg := sdl.Color{R: 20, G: 20, B: 24, A: 255}
 	fg := sdl.Color{R: 230, G: 230, B: 235, A: 255}

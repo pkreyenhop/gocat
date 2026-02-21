@@ -207,6 +207,11 @@ func TestLeapCmdHDoesNotHide(t *testing.T) {
 	if app.ed.Caret != 0 {
 		t.Fatalf("caret: want 0, got %d", app.ed.Caret)
 	}
+
+	// Simulate hide event; should be ignored/undone.
+	if !handleEvent(&app, &sdl.WindowEvent{Event: sdl.WINDOWEVENT_HIDDEN}) {
+		t.Fatal("unexpected quit on hide")
+	}
 }
 
 // GUI input: Cmd+M normally minimizes the window. Ensure we ignore the window
@@ -224,7 +229,7 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 	}
 	defer win.Destroy()
 
-	app := appState{ed: editor.NewEditor("mmm"), win: win}
+	app := appState{ed: editor.NewEditor("mmm"), win: win, lastW: 200, lastH: 100}
 
 	sdl.SetModState(sdl.KMOD_RGUI)
 	handleEvent(&app, &sdl.KeyboardEvent{
@@ -250,5 +255,11 @@ func TestLeapCmdMDoesNotMinimize(t *testing.T) {
 
 	if got := string(app.ed.Leap.Query); got != "m" {
 		t.Fatalf("leap query: want %q, got %q", "m", got)
+	}
+
+	// Verify window size preserved
+	w, h := win.GetSize()
+	if int(w) != 200 || int(h) != 100 {
+		t.Fatalf("window size changed after minimize handling: got %dx%d", w, h)
 	}
 }
