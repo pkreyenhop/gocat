@@ -24,6 +24,7 @@ go run .
 - Headless logic lives in `editor/` (no SDL dependency). Run unit tests with `go test ./editor`.
 - The SDL driver is in `main.go` and uses `editor.Editor` for all buffer/leap operations.
 - Tests in `editor/editor_logic_test.go` use a small fixture helper (`run(t, buf, caret, func(*fixture))`) so new behaviour specs stay terse and UI-free.
+- Optional GUI smoke test lives in `main_gui_test.go` behind the `gui` build tag; run with `SDL_VIDEODRIVER=dummy go test -tags gui ./...` when SDL2/SDL2_ttf and fonts are available.
 
 ## SDL UI Driver (`main.go`)
 

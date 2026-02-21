@@ -11,6 +11,7 @@
 - `go build .` — compile the binary with the same SDL prerequisites.
 - `go test ./editor` — run headless logic tests only; safe when SDL is unavailable.
 - `go test ./...` — full test/build (also compiles `main.go`); requires SDL toolchain to be installed and discoverable.
+- `SDL_VIDEODRIVER=dummy go test -tags gui ./...` — run the optional GUI smoke test (`main_gui_test.go`) if SDL2/SDL2_ttf and a usable monospace font are installed.
 
 ## Coding Style & Naming Conventions
 - Run `gofmt` before sending changes; default Go tabs/formatting.
