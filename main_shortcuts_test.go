@@ -289,6 +289,43 @@ func TestCtrlONavigatesUpWithDotDot(t *testing.T) {
 	}
 }
 
+func TestSaveAllSkipsCleanBuffers(t *testing.T) {
+	ensureSDL(t)
+	root := t.TempDir()
+	one := filepath.Join(root, "one.txt")
+	two := filepath.Join(root, "two.txt")
+	_ = os.WriteFile(one, []byte("ONE"), 0644)
+	_ = os.WriteFile(two, []byte("TWO"), 0644)
+
+	app := appState{openRoot: root}
+	app.initBuffers(editor.NewEditor("dirty"))
+	app.currentPath = one
+	app.buffers[0].path = one
+	app.buffers[0].dirty = true
+
+	app.addBuffer()
+	app.buffers[1].path = two
+	app.buffers[1].dirty = false
+
+	sdl.SetModState(sdl.KMOD_CTRL | sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_s, Mod: sdl.KMOD_LSHIFT},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+Shift+S")
+	}
+
+	data1, _ := os.ReadFile(one)
+	if string(data1) != "dirty" {
+		t.Fatalf("dirty buffer should be saved, got %q", string(data1))
+	}
+	data2, _ := os.ReadFile(two)
+	if string(data2) != "TWO" {
+		t.Fatalf("clean buffer should be untouched, got %q", string(data2))
+	}
+}
+
 func TestLoadAndSaveLeavesFileUnchanged(t *testing.T) {
 	ensureSDL(t)
 	root := t.TempDir()
@@ -918,10 +955,12 @@ func TestShortcutCtrlSSavesAllBuffers(t *testing.T) {
 	app := appState{openRoot: root}
 	app.initBuffers(editor.NewEditor("A"))
 	app.buffers[0].path = a
+	app.buffers[0].dirty = true
 	app.addBuffer()
 	app.buffers[1].path = b
 	app.currentPath = b
 	app.ed.InsertText("B")
+	app.buffers[1].dirty = true
 
 	sdl.SetModState(sdl.KMOD_CTRL | sdl.KMOD_SHIFT)
 	if !handleEvent(&app, &sdl.KeyboardEvent{

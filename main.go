@@ -345,7 +345,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 						if err := saveAll(app); err != nil {
 							app.lastEvent = fmt.Sprintf("SAVE ALL ERR: %v", err)
 						} else {
-							app.lastEvent = "Saved all buffers"
+							app.lastEvent = "Saved dirty buffers"
 						}
 						return true
 					}
@@ -747,12 +747,25 @@ func saveAll(app *appState) error {
 	if app == nil || len(app.buffers) == 0 {
 		return fmt.Errorf("no buffers to save")
 	}
+	orig := app.bufIdx
+	saved := 0
 	for i := range app.buffers {
 		app.bufIdx = i
 		app.syncActiveBuffer()
+		if !app.buffers[i].dirty {
+			continue
+		}
 		if err := saveCurrent(app); err != nil {
+			app.bufIdx = orig
+			app.syncActiveBuffer()
 			return err
 		}
+		saved++
+	}
+	app.bufIdx = orig
+	app.syncActiveBuffer()
+	if saved == 0 {
+		return fmt.Errorf("no dirty buffers to save")
 	}
 	return nil
 }
