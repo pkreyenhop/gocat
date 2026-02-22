@@ -2,7 +2,7 @@
 
 ## Overview
 
-This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. It opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection.
+This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. Inspired by the Canon Cat and Helix/Vim modal cues, it opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection.
 
 ## Core Behavior
 
