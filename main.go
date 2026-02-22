@@ -1170,24 +1170,23 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	// Build condensed status line
-	status := bufStatus
+	parts := []string{bufStatus}
 	if app.open.Active {
-		status += fmt.Sprintf(" | OPEN query=%q matches=%d", app.open.Query, len(app.open.Matches))
+		parts = append(parts, fmt.Sprintf("OPEN query=%q matches=%d", app.open.Query, len(app.open.Matches)))
 	} else if app.ed.Leap.Active {
 		dirArrow := "→"
 		if app.ed.Leap.Dir == editor.DirBack {
 			dirArrow = "←"
 		}
-		status += fmt.Sprintf(" | LEAP %s selecting=%v src=%s query=%q last=%q", dirArrow, app.ed.Leap.Selecting, app.ed.Leap.LastSrc, string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit))
+		parts = append(parts, fmt.Sprintf("LEAP %s selecting=%v src=%s query=%q last=%q", dirArrow, app.ed.Leap.Selecting, app.ed.Leap.LastSrc, string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit)))
 	} else {
-		status += fmt.Sprintf(" | EDIT last=%q", string(app.ed.Leap.LastCommit))
+		parts = append(parts, fmt.Sprintf("EDIT last=%q", string(app.ed.Leap.LastCommit)))
 	}
 	if curDir != "" {
-		status += fmt.Sprintf(" | cwd=%s", curDir)
+		parts = append(parts, fmt.Sprintf("cwd=%s", curDir))
 	}
-	if app.lastEvent != "" {
-		status += fmt.Sprintf(" | %s", app.lastEvent)
-	}
+	status := "gc| " + strings.Join(parts, " | ")
+	rightText := app.lastEvent
 
 	infoBarH := lineH + 8
 
@@ -1265,6 +1264,15 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	r.SetDrawColor(fg.R, fg.G, fg.B, fg.A)
 	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(barY), W: int32(w), H: int32(infoBarH)})
 	drawText(r, font, left, barY+4, status, bg)
+	if rightText != "" {
+		if wtxt, _, err := font.SizeUTF8(rightText); err == nil {
+			rx := w - wtxt - left
+			if rx < left {
+				rx = left
+			}
+			drawText(r, font, rx, barY+4, rightText, bg)
+		}
+	}
 
 	r.Present()
 }
