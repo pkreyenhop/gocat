@@ -40,6 +40,7 @@ type bufferSlot struct {
 	// picker buffers are temporary file-list views
 	picker     bool
 	pickerRoot string
+	dirty      bool
 }
 
 type appState struct {
@@ -713,6 +714,7 @@ func saveCurrent(app *appState) error {
 		return err
 	}
 	app.buffers[app.bufIdx].path = path
+	app.buffers[app.bufIdx].dirty = false
 	return nil
 }
 
@@ -757,6 +759,7 @@ func openPath(app *appState, path string) error {
 	}
 	app.currentPath = path
 	app.buffers[app.bufIdx].path = path
+	app.buffers[app.bufIdx].dirty = false
 	app.ed.Buf = []rune(string(data))
 	app.ed.Caret = 0
 	app.ed.Sel = editor.Sel{}
@@ -1209,6 +1212,9 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Build condensed status line
 	parts := []string{bufStatus}
+	if len(app.buffers) > 0 && app.buffers[app.bufIdx].dirty {
+		parts = append(parts, "*unsaved*")
+	}
 	if app.open.Active {
 		parts = append(parts, fmt.Sprintf("OPEN query=%q matches=%d", app.open.Query, len(app.open.Matches)))
 	} else if app.ed.Leap.Active {
