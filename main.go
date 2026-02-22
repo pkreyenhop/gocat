@@ -780,6 +780,20 @@ func loadFileAtCaret(app *appState) error {
 		return nil
 	}
 
+	if slot.picker && strings.HasSuffix(line, "/") {
+		next := filepath.Join(root, strings.TrimSuffix(line, "/"))
+		list, err := pickerLines(next, 500)
+		if err != nil {
+			return err
+		}
+		app.openRoot = next
+		slot.pickerRoot = next
+		slot.ed.Buf = []rune(strings.Join(list, "\n"))
+		app.currentPath = ""
+		app.ed = slot.ed
+		return nil
+	}
+
 	full := line
 	if !filepath.IsAbs(full) {
 		full = filepath.Join(root, line)
@@ -883,14 +897,33 @@ func listFiles(root string, limit int) ([]string, error) {
 }
 
 func pickerLines(root string, limit int) ([]string, error) {
-	files, err := listFiles(root, limit-1)
+	if root == "" {
+		return nil, fmt.Errorf("no root")
+	}
+	root = filepath.Clean(root)
+	entries := make([]string, 0, limit)
+	entries = append(entries, "..")
+
+	dirEntries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	lines := make([]string, 0, len(files)+1)
-	lines = append(lines, "..")
-	lines = append(lines, files...)
-	return lines, nil
+	for _, de := range dirEntries {
+		if len(entries) >= limit {
+			break
+		}
+		name := de.Name()
+		if strings.HasPrefix(name, ".") || name == "vendor" {
+			continue
+		}
+		if de.IsDir() {
+			entries = append(entries, name+"/")
+		} else {
+			entries = append(entries, name)
+		}
+	}
+	sort.Strings(entries[1:]) // keep ".." first
+	return entries, nil
 }
 
 // loadStartupFiles loads or creates files provided on the CLI into buffers and
