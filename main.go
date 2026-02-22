@@ -1220,7 +1220,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	// Helix-inspired palette, tweaked to use a purple background
-	bg := sdl.Color{R: 30, G: 30, B: 46, A: 255} // #1e1e2e
+	bg := sdl.Color{R: 26, G: 27, B: 38, A: 255} // #1a1b26
 	fg := sdl.Color{R: 230, G: 224, B: 236, A: 255}
 	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}
 	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
