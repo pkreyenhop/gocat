@@ -1219,13 +1219,13 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		app.lastH = int(hh)
 	}
 
-	// Helix-inspired default palette (base16-default-dark-ish)
-	bg := sdl.Color{R: 24, G: 24, B: 24, A: 255}          // base00
-	fg := sdl.Color{R: 216, G: 216, B: 216, A: 255}       // base05
-	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}    // base0B
-	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}     // base0D
-	selCol := sdl.Color{R: 56, G: 56, B: 56, A: 255}      // base02
-	caretCol := sdl.Color{R: 247, G: 202, B: 136, A: 255} // base0A
+	// Helix-inspired palette, tweaked to use a purple background
+	bg := sdl.Color{R: 48, G: 32, B: 64, A: 255}
+	fg := sdl.Color{R: 230, G: 224, B: 236, A: 255}
+	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}
+	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
+	selCol := sdl.Color{R: 70, G: 50, B: 90, A: 255}
+	caretCol := sdl.Color{R: 247, G: 202, B: 136, A: 255}
 
 	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	r.Clear()
