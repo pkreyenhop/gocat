@@ -98,6 +98,9 @@ func TestSaveCurrentDefaultsToLeapTxt(t *testing.T) {
 	app := &appState{openRoot: root}
 	app.initBuffers(editor.NewEditor("hi"))
 
+	app.currentPath = filepath.Join(root, defaultPath(app))
+	app.buffers[0].path = app.currentPath
+	app.buffers[0].dirty = true
 	if err := saveCurrent(app); err != nil {
 		t.Fatalf("saveCurrent: %v", err)
 	}

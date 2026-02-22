@@ -737,8 +737,8 @@ func saveCurrent(app *appState) error {
 	}
 	path := app.currentPath
 	if path == "" {
-		path = defaultPath(app)
-		app.currentPath = path
+		app.lastEvent = "Save: enter filename in info line"
+		return fmt.Errorf("no path")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
