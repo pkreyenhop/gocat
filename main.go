@@ -47,6 +47,8 @@ type appState struct {
 	lastEvent   string
 	lastMods    sdl.Keymod
 	blinkAt     time.Time
+	lastSpaceAt time.Time
+	lastSpaceLn int
 	win         *sdl.Window
 	lastW       int
 	lastH       int
@@ -96,6 +98,7 @@ func (app *appState) initBuffers(ed *editor.Editor) {
 	app.bufIdx = 0
 	app.ed = ed
 	app.currentPath = ""
+	app.lastSpaceLn = -1
 }
 
 func (app *appState) syncActiveBuffer() {
@@ -577,6 +580,29 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			ed.Leap.LastSrc = "textinput"
 			ed.LeapAppend(text)
 		} else {
+			if text == " " {
+				lines := editor.SplitLines(ed.Buf)
+				lineIdx := editor.CaretLineAt(lines, ed.Caret)
+				col := editor.CaretColAt(lines, ed.Caret)
+				double := app.lastSpaceLn == lineIdx && time.Since(app.lastSpaceAt) < 2*time.Second
+				app.lastSpaceLn = lineIdx
+				app.lastSpaceAt = time.Now()
+				if double && ed.Caret > 0 && ed.Buf[ed.Caret-1] == ' ' {
+					ed.BackspaceOrDeleteSelection(true)
+					lines = editor.SplitLines(ed.Buf)
+					col = editor.CaretColAt(lines, ed.Caret)
+					lineStart := ed.Caret - col
+					if lineStart < 0 {
+						lineStart = 0
+					}
+					ed.Caret = lineStart
+					ed.InsertText("\t")
+					app.lastSpaceLn = -1
+					return true
+				}
+			} else {
+				app.lastSpaceLn = -1
+			}
 			ed.InsertText(text)
 		}
 	}

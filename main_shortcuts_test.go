@@ -378,6 +378,31 @@ func TestCursorKeyRepeatMovesCaret(t *testing.T) {
 	}
 }
 
+func TestDoubleSpaceIndentsLine(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("abc"))
+	app.ed.Caret = 0
+
+	// First space inserts normally
+	if !handleEvent(&app, &sdl.TextInputEvent{Text: [32]byte{' '}}) {
+		t.Fatal("unexpected quit on first space")
+	}
+	if got := string(app.ed.Buf); got != " abc" {
+		t.Fatalf("after first space: got %q", got)
+	}
+
+	// Second space should remove the first and insert a tab at line start
+	if !handleEvent(&app, &sdl.TextInputEvent{Text: [32]byte{' '}}) {
+		t.Fatal("unexpected quit on second space")
+	}
+	if got := string(app.ed.Buf); got != "\tabc" {
+		t.Fatalf("after double space indent: got %q", got)
+	}
+	if app.ed.Caret != 1 {
+		t.Fatalf("caret should sit after tab, got %d", app.ed.Caret)
+	}
+}
+
 func TestCtrlCommaPeriodPageScroll(t *testing.T) {
 	lines := make([]string, 50)
 	for i := range lines {
