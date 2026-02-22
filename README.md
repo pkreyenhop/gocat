@@ -2,7 +2,7 @@
 
 ## Overview
 
-This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. Inspired by the Canon Cat, acme, AMP, and Emacs, it opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection. A gutter shows line numbers and highlights the current line.
+This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. The “gc” name nods to GoCat, and the editor draws inspiration from the Canon Cat, Helix, acme, AMP, and Emacs. It opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection. A gutter shows line numbers and highlights the current line.
 
 ## Core Behavior
 

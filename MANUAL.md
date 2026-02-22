@@ -2,7 +2,7 @@
 
 ## Overview
 
-Gocat is a single-window text editor inspired by Canon Cat, acme, AMP, and Emacs. It pairs an SDL2 UI with a headless editing core, focusing on fast “Leap” navigation, multi-buffer workflows, and keyboard-centric shortcuts. Fonts are bundled (JetBrains Mono), the background is purple-toned, and the status/input lines sit at the bottom for mode and prompt feedback.
+Gocat (“gc”) nods to GoCat and is inspired by the Canon Cat, Helix, acme, AMP, and Emacs. It pairs an SDL2 UI with a headless editing core, focusing on fast “Leap” navigation, multi-buffer workflows, and keyboard-centric shortcuts. Fonts are bundled (JetBrains Mono), the background is purple-toned, and the status/input lines sit at the bottom for mode and prompt feedback.
 
 ## Launching
 
@@ -54,4 +54,3 @@ go build -o gc .
 - **Open by pattern:** `Ctrl+O`, type a few letters of the filename with Leap, `Ctrl+L` to open. Use `..` to go up a directory.
 - **Save unnamed buffer:** `Ctrl+W`, type `notes/todo.txt` in the input line, Enter — file is created and saved, buffer is renamed.
 - **Multiple files:** `./gc file1.txt dir/file2.txt` opens two buffers; `Tab`/`Shift+Tab` cycles.
-

@@ -1,5 +1,7 @@
 # Gocat Behaviour Rules
 
+“gc” nods to GoCat and the editor draws inspiration from the Canon Cat, Helix, acme, AMP, and Emacs.
+
 - **Leap navigation**
   - Hold Right Cmd to leap forward, Left Cmd to leap backward; queries are case-insensitive.
   - Dual-Cmd selection: hold both Cmd keys while leaping to extend a selection.
