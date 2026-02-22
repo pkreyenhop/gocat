@@ -1310,6 +1310,12 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	app.scrollLine = startLine
 	y = contentTop
 
+	// Gutter background
+	gutterX := left - gutterW
+	gutterBg := sdl.Color{R: 26, G: 13, B: 33, A: 255}
+	r.SetDrawColor(gutterBg.R, gutterBg.G, gutterBg.B, gutterBg.A)
+	_ = r.FillRect(&sdl.Rect{X: int32(gutterX), Y: int32(contentTop), W: int32(gutterW - 6), H: int32(visibleLines * lineH)})
+
 	// Draw selection background (monospace-based)
 	if app.ed.Sel.Active {
 		a, b := app.ed.Sel.Normalised()
@@ -1322,7 +1328,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
 		line := lines[i]
 		lnText := fmt.Sprintf("%4d ", i+1)
-		drawText(r, font, left-gutterW, y, lnText, bg)
+		drawText(r, font, left-gutterW, y, lnText, fg)
 		drawText(r, font, left, y, expandTabs(line, tabWidth), fg)
 
 		if i == cLine && blinkOn {
