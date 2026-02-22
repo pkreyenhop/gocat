@@ -2,17 +2,17 @@
 
 ## Overview
 
-This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. Inspired by the Canon Cat, acme, AMP, and Emacs, it opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection.
+This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-style “Leap” navigation. Inspired by the Canon Cat, acme, AMP, and Emacs, it opens a single window, renders a text buffer with bundled JetBrains Mono, and tracks a caret plus optional selection. A gutter shows line numbers and highlights the current line.
 
 ## Core Behavior
 
 - **Leap quasimode**: Hold Right Command to leap forward or Left Command to leap backward. Typing while held builds a query, and the caret jumps to the next match anchored at the origin caret (case-insensitive). ESC clears selection, closes the picker, or closes a clean buffer; dirty buffers stay open and warn in the status bar.
 - **Dual-Cmd selection**: While leaping with one Command key held, press the other Command key to start a selection anchored at the original caret; further Leap moves extend the selection. Ctrl+Cmd (Left/Right) triggers Leap Again without entering quasimode.
-- **Buffers & files**: `Ctrl+B` creates a new untitled buffer; `Tab`/`Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; `Ctrl+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each.
+- **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Tab`/`Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
 - **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start. Passing a missing filename opens an empty buffer with that name; the file is created on first save.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard (Cmd is reserved for Leap).
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
-- **Rendering cues**: Helix-inspired dark palette; status line shows mode/query/buffer and `*unsaved*`; caret is a blinking block; selection highlighted; active Leap match underlined.
+- **Rendering cues**: Purple palette; status line shows mode/query/buffer and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined.
 
 ## Shortcut Quick Reference
 
@@ -54,7 +54,7 @@ go build -o gc .
 
 ## SDL UI Driver (`main.go`)
 
-- Boots SDL2/SDL2_ttf, opens a resizable window, and loads a mono font from common system paths (falls back to `DejaVuSansMono.ttf` beside the binary).
-- Creates an `editor.Editor`, injects an SDL-backed clipboard, and enters an event loop that maps Cmd+typing into Leap, dual-Cmd selection, Ctrl+Cmd “Leap Again,” Ctrl+C/X/V clipboard, `Ctrl+B` new buffer, `Tab` buffer cycle, `Ctrl+O` file picker, `Ctrl+L` load selected file, `Ctrl+W` save, `Ctrl+Q` quit, and plain text/caret edits when Leap is inactive.
+- Boots SDL2/SDL2_ttf, opens a resizable window, and loads bundled JetBrains Mono from `font/`.
+- Creates an `editor.Editor`, injects an SDL-backed clipboard, and enters an event loop that maps Cmd+typing into Leap (case-insensitive), dual-Cmd selection, Ctrl+Cmd “Leap Again,” Ctrl+C/X/V clipboard, `Ctrl+B` new `<untitled>` buffer, `Tab`/`Shift+Tab` buffer cycle, `Ctrl+O` file picker, `Ctrl+L` load selected file, `Ctrl+W` save (prompts for filename when unnamed via the input line), `Ctrl+Q` quit current buffer, and plain text/caret edits when Leap is inactive.
 - Captures text via `TEXTINPUT` events (with KEYDOWN fallback when Cmd suppresses them on macOS) and records the last event/modifiers for on-screen debugging.
-- Renders the buffer with a status line showing mode/query/buffer, draws a Helix-like caret block and selection rectangles using monospace metrics, and underlines the current match during an active Leap.
+- Renders the buffer with a status line above the input line (showing mode/query/buffer, cwd, `*unsaved*`, last event), draws line numbers in a gutter with current-line highlight, and underlines the current match during an active Leap.
