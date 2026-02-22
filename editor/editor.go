@@ -258,21 +258,30 @@ func (e *Editor) DeleteWordAtCaret() bool {
 		return true
 	}
 	if len(e.Buf) == 0 || e.Caret >= len(e.Buf) {
-		if e.Caret == len(e.Buf) && e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
-			start := e.Caret - 1
-			for start > 0 && isWord(e.Buf[start-1]) {
-				start--
-			}
-			e.Buf = append(e.Buf[:start], e.Buf[e.Caret:]...)
-			e.Caret = start
-			return true
+		if e.Caret == 0 {
+			return false
 		}
-		return false
+		// At or past the end: skip trailing non-word run, then delete the word to the left.
+		idx := e.Caret - 1
+		for idx >= 0 && !isWord(e.Buf[idx]) {
+			idx--
+		}
+		if idx < 0 {
+			return false
+		}
+		end := idx + 1
+		start := idx
+		for start > 0 && isWord(e.Buf[start-1]) {
+			start--
+		}
+		e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+		e.Caret = start
+		return true
 	}
 	r := e.Buf[e.Caret]
 	if !isWord(r) {
-		// If caret is right after a word, delete that word instead.
-		if e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
+		// If caret is on whitespace right after a word, delete that word instead.
+		if unicode.IsSpace(r) && e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
 			start := e.Caret - 1
 			for start > 0 && isWord(e.Buf[start-1]) {
 				start--

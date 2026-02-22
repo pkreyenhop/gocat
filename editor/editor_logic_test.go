@@ -81,6 +81,27 @@ func TestFindInDir_IgnoresCase(t *testing.T) {
 	}
 }
 
+func TestDeleteWordAtCaretEdgeCases(t *testing.T) {
+	run(t, "abc!", 4, func(f *fixture) {
+		// Caret at end should delete word to the left.
+		f.ed.Caret = len(f.ed.Buf)
+		if !f.ed.DeleteWordAtCaret() {
+			f.t.Fatal("expected delete at end to succeed")
+		}
+		f.expectBuffer("!")
+		f.expectCaret(0)
+	})
+
+	run(t, "abc!", 3, func(f *fixture) {
+		// Caret on punctuation should delete the punctuation only.
+		if !f.ed.DeleteWordAtCaret() {
+			f.t.Fatal("expected delete on punctuation")
+		}
+		f.expectBuffer("abc")
+		f.expectCaret(3)
+	})
+}
+
 func TestLeap_AnchoredAtOrigin_Forward(t *testing.T) {
 	// Leap refinements are anchored at the origin caret; this confirms a forward
 	// leap moves from position 0 to the first "hello" while committing the query.

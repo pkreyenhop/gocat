@@ -327,6 +327,24 @@ func TestSaveAllSkipsCleanBuffers(t *testing.T) {
 	}
 }
 
+func TestSaveAllNoDirtyBuffers(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("clean"))
+	app.buffers[0].dirty = false
+
+	sdl.SetModState(sdl.KMOD_CTRL | sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_s},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+Shift+S")
+	}
+	if !strings.Contains(app.lastEvent, "SAVE ALL ERR") {
+		t.Fatalf("expected SAVE ALL ERR in lastEvent, got %q", app.lastEvent)
+	}
+}
+
 func TestLoadAndSaveLeavesFileUnchanged(t *testing.T) {
 	ensureSDL(t)
 	root := t.TempDir()
@@ -740,6 +758,40 @@ func TestDeleteKeyDeletesWord(t *testing.T) {
 	}
 	if !app.buffers[app.bufIdx].dirty {
 		t.Fatalf("buffer should be dirty after delete word to left")
+	}
+}
+
+func TestEscapeClosesCleanBuffer(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("clean"))
+	app.buffers[0].dirty = false
+
+	if handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_ESCAPE},
+	}) {
+		t.Fatal("escape on clean last buffer should quit (returned true)")
+	}
+}
+
+func TestEscapeKeepsDirtyBuffer(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("dirty"))
+	app.buffers[0].dirty = true
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_ESCAPE},
+	}) {
+		t.Fatal("escape on dirty buffer should not quit")
+	}
+	if app.ed == nil || len(app.buffers) == 0 {
+		t.Fatal("dirty buffer should remain open")
+	}
+	if !strings.Contains(app.lastEvent, "Unsaved changes") {
+		t.Fatalf("expected warning in lastEvent, got %q", app.lastEvent)
 	}
 }
 
