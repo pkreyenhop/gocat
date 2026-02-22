@@ -1324,12 +1324,14 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	drawn := 0
+	lnDim := sdl.Color{R: 130, G: 115, B: 160, A: 255}
+	lnBright := sdl.Color{R: 227, G: 207, B: 255, A: 255}
 	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
 		line := lines[i]
 		lnText := fmt.Sprintf("%4d ", i+1)
-		lnCol := fg
+		lnCol := lnDim
 		if i == cLine {
-			lnCol = sdl.Color{R: 227, G: 207, B: 255, A: 255} // #E3CFFF
+			lnCol = lnBright
 			// Highlight current line background
 			r.SetDrawColor(selCol.R, selCol.G, selCol.B, selCol.A)
 			_ = r.FillRect(&sdl.Rect{X: int32(left - gutterW), Y: int32(y), W: int32(w - (left - gutterW)), H: int32(lineH)})
