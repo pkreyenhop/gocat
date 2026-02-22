@@ -586,6 +586,7 @@ func TestEscapeClearsSelectionAndQuitsOtherwise(t *testing.T) {
 	app.initBuffers(editor.NewEditor("abc"))
 	app.ed.Sel.Active = true
 	app.ed.Sel.A, app.ed.Sel.B = 0, 3
+	app.buffers[0].dirty = true // keep dirty to avoid close/quit
 
 	// Esc should clear selection and keep running
 	if !handleEvent(&app, &sdl.KeyboardEvent{
@@ -599,7 +600,7 @@ func TestEscapeClearsSelectionAndQuitsOtherwise(t *testing.T) {
 		t.Fatal("selection should be cleared by escape")
 	}
 
-	// Second escape with no selection should be a no-op (not quit)
+	// Second escape with no selection should be a no-op (not quit) while dirty
 	if !handleEvent(&app, &sdl.KeyboardEvent{
 		Type:   sdl.KEYDOWN,
 		Repeat: 0,

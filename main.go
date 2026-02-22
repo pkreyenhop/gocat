@@ -287,7 +287,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			fmt.Println(app.lastEvent)
 		}
 
-		// Escape: clear selection or close picker; no global quit
+		// Escape: clear selection, close picker, or close clean buffer; no global quit
 		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
 			if ed.Sel.Active {
 				ed.Sel.Active = false
@@ -299,6 +299,15 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 				app.lastEvent = "Closed file picker"
 				return true
 			}
+			if len(app.buffers) > 0 && !app.buffers[app.bufIdx].dirty {
+				remaining := app.closeBuffer()
+				app.lastEvent = "Closed clean buffer"
+				if remaining == 0 {
+					return false
+				}
+				return true
+			}
+			app.lastEvent = "Unsaved changes — press Ctrl+W to save or Ctrl+Q to close"
 			return true
 		}
 
