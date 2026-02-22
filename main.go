@@ -563,7 +563,11 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 				ed.BackspaceOrDeleteSelection(true)
 				app.markDirty()
 			case sdl.K_DELETE:
-				if ed.DeleteWordAtCaret() {
+				if (mods & sdl.KMOD_SHIFT) != 0 {
+					if ed.DeleteLineAtCaret() {
+						app.markDirty()
+					}
+				} else if ed.DeleteWordAtCaret() {
 					app.markDirty()
 				}
 			case sdl.K_LEFT:

@@ -723,6 +723,27 @@ func TestDeleteKeyDeletesWord(t *testing.T) {
 	}
 }
 
+func TestShiftDeleteDeletesLine(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("line1\nline2\nline3"))
+	app.ed.Caret = len("line1\n") + 2 // on line2
+
+	sdl.SetModState(sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_DELETE, Mod: sdl.KMOD_LSHIFT},
+	}) {
+		t.Fatal("unexpected quit on Shift+Delete")
+	}
+	if got := string(app.ed.Buf); got != "line1\nline3" {
+		t.Fatalf("shift+delete should remove current line, got %q", got)
+	}
+	if !app.buffers[app.bufIdx].dirty {
+		t.Fatalf("buffer should be dirty after shift+delete")
+	}
+}
+
 type stubClip struct {
 	text string
 }

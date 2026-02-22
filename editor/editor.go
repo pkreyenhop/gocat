@@ -278,6 +278,44 @@ func (e *Editor) DeleteWordAtCaret() bool {
 	return true
 }
 
+// DeleteLineAtCaret removes the entire line containing the caret.
+func (e *Editor) DeleteLineAtCaret() bool {
+	if e == nil {
+		return false
+	}
+	e.recordUndo()
+	lines := SplitLines(e.Buf)
+	if len(lines) == 0 {
+		return false
+	}
+	lineIdx, _ := LineColForPos(lines, e.Caret)
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return false
+	}
+	start := 0
+	for i := 0; i < lineIdx; i++ {
+		start += len([]rune(lines[i])) + 1
+	}
+	end := start + len([]rune(lines[lineIdx]))
+	// remove newline if not last line
+	if lineIdx < len(lines)-1 {
+		end++
+	}
+	if end < start {
+		return false
+	}
+	if start > len(e.Buf) {
+		start = len(e.Buf)
+	}
+	if end > len(e.Buf) {
+		end = len(e.Buf)
+	}
+	e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+	e.Caret = clamp(start, 0, len(e.Buf))
+	e.Sel.Active = false
+	return true
+}
+
 func (e *Editor) deleteSelection() {
 	a, b := e.Sel.Normalised()
 	a = clamp(a, 0, len(e.Buf))
