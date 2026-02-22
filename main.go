@@ -1126,14 +1126,20 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	lines := editor.SplitLines(app.ed.Buf)
 	bufStatus := bufferLabel(app)
+	curDir := app.openRoot
+	if curDir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			curDir = cwd
+		}
+	}
 
 	// Status lines
 	if app.open.Active {
-		drawText(r, font, left, top,
-			fmt.Sprintf("%s OPEN query=%q matches=%d (Enter opens if single, Esc cancels)",
-				bufStatus, app.open.Query, len(app.open.Matches)),
-			blue,
-		)
+		msg := fmt.Sprintf("%s OPEN query=%q matches=%d (Enter opens if single, Esc cancels)", bufStatus, app.open.Query, len(app.open.Matches))
+		if curDir != "" {
+			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
+		}
+		drawText(r, font, left, top, msg, blue)
 	} else if app.ed.Leap.Active {
 		col := blue
 		dirArrow := "→"
@@ -1141,18 +1147,20 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 			col = orange
 			dirArrow = "←"
 		}
-		drawText(r, font, left, top,
-			fmt.Sprintf("%s LEAP %s heldL=%v heldR=%v selecting=%v src=%s query=%q last=%q",
-				bufStatus, dirArrow, app.ed.Leap.HeldL, app.ed.Leap.HeldR, app.ed.Leap.Selecting, app.ed.Leap.LastSrc,
-				string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit)),
-			col,
-		)
+		msg := fmt.Sprintf("%s LEAP %s heldL=%v heldR=%v selecting=%v src=%s query=%q last=%q",
+			bufStatus, dirArrow, app.ed.Leap.HeldL, app.ed.Leap.HeldR, app.ed.Leap.Selecting, app.ed.Leap.LastSrc,
+			string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit))
+		if curDir != "" {
+			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
+		}
+		drawText(r, font, left, top, msg, col)
 	} else {
-		drawText(r, font, left, top,
-			fmt.Sprintf("%s EDIT  (Cmd-only Leap. Ctrl+Cmd = Leap Again. Ctrl+C/X/V clipboard)  last=%q",
-				bufStatus, string(app.ed.Leap.LastCommit)),
-			dim,
-		)
+		msg := fmt.Sprintf("%s EDIT  (Cmd-only Leap. Ctrl+Cmd = Leap Again. Ctrl+C/X/V clipboard)  last=%q",
+			bufStatus, string(app.ed.Leap.LastCommit))
+		if curDir != "" {
+			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
+		}
+		drawText(r, font, left, top, msg, dim)
 	}
 	drawText(r, font, left, top+lineH+2, app.lastEvent, dim)
 
