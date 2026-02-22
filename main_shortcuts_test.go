@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -1234,14 +1235,23 @@ func TestStartupCreatesMissingFileFromArg(t *testing.T) {
 	app.initBuffers(editor.NewEditor(""))
 	loadStartupFiles(&app, []string{path})
 
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected file to exist: %v", err)
-	}
-	if string(app.ed.Buf) != "" {
-		t.Fatalf("buffer should start empty, got %q", string(app.ed.Buf))
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file should not be created until save, err=%v", err)
 	}
 	if app.currentPath != path {
 		t.Fatalf("currentPath: want %s, got %s", path, app.currentPath)
+	}
+	// Save should create it.
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_w},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+W")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected file after save: %v", err)
 	}
 }
 
@@ -1253,14 +1263,26 @@ func TestStartupCreatesParentDir(t *testing.T) {
 	app.initBuffers(editor.NewEditor(""))
 	loadStartupFiles(&app, []string{sub})
 
-	if _, err := os.Stat(sub); err != nil {
-		t.Fatalf("expected nested file to exist: %v", err)
+	if _, err := os.Stat(sub); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("nested file should not exist until save, err=%v", err)
 	}
 	if app.currentPath != sub {
 		t.Fatalf("currentPath: want %s, got %s", sub, app.currentPath)
 	}
 	if app.openRoot != filepath.Dir(sub) {
 		t.Fatalf("openRoot should be set to nested dir; got %s", app.openRoot)
+	}
+	// Save should create along with parent dirs.
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_w},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+W")
+	}
+	if _, err := os.Stat(sub); err != nil {
+		t.Fatalf("expected nested file after save: %v", err)
 	}
 }
 

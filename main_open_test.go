@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,14 +138,22 @@ func TestLoadStartupFilesCreatesMissing(t *testing.T) {
 
 	loadStartupFiles(app, []string{target})
 
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("expected file to be created: %v", err)
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected file to not exist until saved, err=%v", err)
 	}
 	if string(app.ed.Buf) != "" {
-		t.Fatalf("new file should be empty, got %q", string(app.ed.Buf))
+		t.Fatalf("new buffer should be empty, got %q", string(app.ed.Buf))
 	}
 	if app.currentPath != target {
 		t.Fatalf("currentPath mismatch: %s", app.currentPath)
+	}
+
+	// Saving should create the file.
+	if err := saveCurrent(app); err != nil {
+		t.Fatalf("saveCurrent: %v", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "" {
+		t.Fatalf("expected empty file after save, got %q err=%v", string(data), err)
 	}
 }
 

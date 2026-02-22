@@ -740,6 +740,9 @@ func saveCurrent(app *appState) error {
 		path = defaultPath(app)
 		app.currentPath = path
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	if err := os.WriteFile(path, []byte(string(app.ed.Buf)), 0644); err != nil {
 		return err
 	}
@@ -1024,15 +1027,13 @@ func loadStartupFiles(app *appState, args []string) {
 		}
 		app.openRoot = filepath.Dir(abs)
 		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
-			// Create an empty file so the user can start editing immediately.
-			if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-				app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
-				continue
-			}
-			if writeErr := os.WriteFile(abs, []byte(""), 0644); writeErr != nil {
-				app.lastEvent = fmt.Sprintf("OPEN ERR: %v", writeErr)
-				continue
-			}
+			// Missing file: set up empty buffer with path so save can create it, but don't write yet.
+			app.currentPath = abs
+			app.buffers[app.bufIdx].path = abs
+			app.ed.Buf = nil
+			app.buffers[app.bufIdx].dirty = false
+			app.lastEvent = fmt.Sprintf("Buffer for %s (file will be created on save)", abs)
+			continue
 		}
 		if err := openPath(app, abs); err != nil {
 			app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
