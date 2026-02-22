@@ -289,6 +289,51 @@ func TestCtrlONavigatesUpWithDotDot(t *testing.T) {
 	}
 }
 
+func TestLoadAndSaveLeavesFileUnchanged(t *testing.T) {
+	ensureSDL(t)
+	root := t.TempDir()
+	path := filepath.Join(root, "stay.txt")
+	orig := "keep me\nline2"
+	if err := os.WriteFile(path, []byte(orig), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	app := appState{openRoot: root}
+	app.initBuffers(editor.NewEditor(""))
+
+	// Load file via Ctrl+L on listing line.
+	app.ed.Buf = []rune(filepath.Base(path) + "\n")
+	app.ed.Caret = 0
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_l},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+L")
+	}
+	if string(app.ed.Buf) != orig {
+		t.Fatalf("buffer should match file contents after load")
+	}
+
+	// Save without modification; file should stay identical.
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_w},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+W")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != orig {
+		t.Fatalf("file changed after save; got %q want %q", string(data), orig)
+	}
+}
+
 func TestCursorKeyRepeatMovesCaret(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("abcd"))
