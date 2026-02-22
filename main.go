@@ -1356,16 +1356,18 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Status bar at bottom (inverted colors)
 	barY := h - infoBarH
-	r.SetDrawColor(fg.R, fg.G, fg.B, fg.A)
+	barBg := sdl.Color{R: 58, G: 31, B: 70, A: 255}    // #3A1F46
+	barFg := sdl.Color{R: 201, G: 182, B: 242, A: 255} // #C9B6F2
+	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
 	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(barY), W: int32(w), H: int32(infoBarH)})
-	drawText(r, font, left, barY+4, status, bg)
+	drawText(r, font, left, barY+4, status, barFg)
 	if rightText != "" {
 		if wtxt, _, err := font.SizeUTF8(rightText); err == nil {
 			rx := w - wtxt - left
 			if rx < left {
 				rx = left
 			}
-			drawText(r, font, rx, barY+4, rightText, bg)
+			drawText(r, font, rx, barY+4, rightText, barFg)
 		}
 	}
 
