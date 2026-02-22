@@ -12,3 +12,4 @@ gui-test:
 clean:
 	rm -f gc gc.test
 	rm -f leap*.txt testdata/leap*.txt
+	rm - f qk
