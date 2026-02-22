@@ -1239,7 +1239,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	cellW, _, _ := font.SizeUTF8("M")
 	lineH := font.Height() + 4
-	left := 12
+	gutterW := 6 * cellW
+	left := 12 + gutterW
 	top := 12
 
 	// Blink caret: visible for 650ms, hidden for 350ms. Reset on input.
@@ -1320,6 +1321,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	drawn := 0
 	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
 		line := lines[i]
+		lnText := fmt.Sprintf("%4d ", i+1)
+		drawText(r, font, left-gutterW, y, lnText, bg)
 		drawText(r, font, left, y, expandTabs(line, tabWidth), fg)
 
 		if i == cLine && blinkOn {
