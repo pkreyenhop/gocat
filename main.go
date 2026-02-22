@@ -371,7 +371,17 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					app.lastEvent = "Toggled comment"
 					return true
 				case sdl.K_o:
-					list, err := listFiles(app.openRoot, 500)
+					listRoot := app.openRoot
+					if listRoot == "" {
+						if cwd, err := os.Getwd(); err == nil {
+							listRoot = cwd
+						}
+					}
+					// If we're already in a picker, go up one directory.
+					if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
+						listRoot = filepath.Dir(listRoot)
+					}
+					list, err := pickerLines(listRoot, 500)
 					if err != nil {
 						app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
 						return true
@@ -380,7 +390,16 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 						app.lastEvent = "OPEN: no files under root"
 						return true
 					}
-					app.addPickerBuffer(list)
+					app.openRoot = listRoot
+					if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
+						// reuse existing picker buffer
+						app.buffers[app.bufIdx].pickerRoot = listRoot
+						app.buffers[app.bufIdx].ed.Buf = []rune(strings.Join(list, "\n"))
+						app.ed = app.buffers[app.bufIdx].ed
+						app.currentPath = ""
+					} else {
+						app.addPickerBuffer(list)
+					}
 					app.lastEvent = fmt.Sprintf("OPEN: file picker (%d files). Leap to a line, Ctrl+L to load", len(list))
 					return true
 				case sdl.K_l:
@@ -747,6 +766,20 @@ func loadFileAtCaret(app *appState) error {
 		root = slot.pickerRoot
 	}
 
+	if slot.picker && line == ".." {
+		up := filepath.Dir(root)
+		list, err := pickerLines(up, 500)
+		if err != nil {
+			return err
+		}
+		app.openRoot = up
+		slot.pickerRoot = up
+		slot.ed.Buf = []rune(strings.Join(list, "\n"))
+		app.currentPath = ""
+		app.ed = slot.ed
+		return nil
+	}
+
 	full := line
 	if !filepath.IsAbs(full) {
 		full = filepath.Join(root, line)
@@ -847,6 +880,17 @@ func listFiles(root string, limit int) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func pickerLines(root string, limit int) ([]string, error) {
+	files, err := listFiles(root, limit-1)
+	if err != nil {
+		return nil, err
+	}
+	lines := make([]string, 0, len(files)+1)
+	lines = append(lines, "..")
+	lines = append(lines, files...)
+	return lines, nil
 }
 
 // loadStartupFiles loads or creates files provided on the CLI into buffers and

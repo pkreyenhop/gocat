@@ -102,9 +102,14 @@ func TestShortcutCtrlOOpensPickerAndCtrlLLoads(t *testing.T) {
 	if len(app.buffers) != 2 || !app.buffers[app.bufIdx].picker {
 		t.Fatalf("Ctrl+O should create picker buffer; buffers=%d picker=%v", len(app.buffers), app.buffers[app.bufIdx].picker)
 	}
+	lines := editor.SplitLines(app.ed.Buf)
+	if len(lines) == 0 || lines[0] != ".." {
+		t.Fatalf("picker should start with '..', got %v", lines)
+	}
 
 	// Move caret to second line (bravo.txt)
-	app.ed.Caret = len([]rune("alpha.txt")) + 1
+	offset := len("..\n") + len("alpha.txt\n")
+	app.ed.Caret = offset
 
 	// Ctrl+L loads file under caret
 	if !handleEvent(&app, &sdl.KeyboardEvent{
@@ -219,6 +224,55 @@ func TestCtrlLRespectsRootAndAbsolute(t *testing.T) {
 	}
 	if len(app.buffers) != 2 {
 		t.Fatalf("should not add buffer for invalid path; buffers=%d", len(app.buffers))
+	}
+}
+
+func TestCtrlONavigatesUpWithDotDot(t *testing.T) {
+	ensureSDL(t)
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	file := filepath.Join(sub, "file.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	app := appState{openRoot: sub}
+	app.initBuffers(editor.NewEditor(""))
+
+	// First Ctrl+O lists sub with ".." entry.
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_o},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+O")
+	}
+	if !app.buffers[app.bufIdx].picker {
+		t.Fatalf("expected picker buffer")
+	}
+	if got := editor.SplitLines(app.ed.Buf)[0]; got != ".." {
+		t.Fatalf("picker should start with '..', got %q", got)
+	}
+
+	// Second Ctrl+O while in picker should move up to parent directory.
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_o},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+O in picker")
+	}
+	if app.openRoot != filepath.Dir(sub) {
+		t.Fatalf("openRoot should move up to parent; got %s", app.openRoot)
+	}
+	lines := editor.SplitLines(app.ed.Buf)
+	if len(lines) == 0 || lines[0] != ".." {
+		t.Fatalf("picker after moving up should still start with '..'")
 	}
 }
 
