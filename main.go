@@ -1122,7 +1122,8 @@ func ensureCaretVisible(app *appState, caretLine, totalLines, visibleLines int) 
 // ======================
 
 func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
-	_, h32 := win.GetSize()
+	w32, h32 := win.GetSize()
+	w := int(w32)
 	h := int(h32)
 	if app != nil && app.win != nil {
 		x, y := win.GetPosition()
@@ -1136,10 +1137,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	// Helix-inspired default palette (base16-default-dark-ish)
 	bg := sdl.Color{R: 24, G: 24, B: 24, A: 255}          // base00
 	fg := sdl.Color{R: 216, G: 216, B: 216, A: 255}       // base05
-	dim := sdl.Color{R: 184, G: 184, B: 184, A: 255}      // base04
 	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}    // base0B
 	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}     // base0D
-	orange := sdl.Color{R: 220, G: 150, B: 86, A: 255}    // base09
 	selCol := sdl.Color{R: 56, G: 56, B: 56, A: 255}      // base02
 	caretCol := sdl.Color{R: 247, G: 202, B: 136, A: 255} // base0A
 
@@ -1170,39 +1169,30 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		}
 	}
 
-	// Status lines
+	// Build condensed status line
+	status := bufStatus
 	if app.open.Active {
-		msg := fmt.Sprintf("%s OPEN query=%q matches=%d (Enter opens if single, Esc cancels)", bufStatus, app.open.Query, len(app.open.Matches))
-		if curDir != "" {
-			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
-		}
-		drawText(r, font, left, top, msg, blue)
+		status += fmt.Sprintf(" | OPEN query=%q matches=%d", app.open.Query, len(app.open.Matches))
 	} else if app.ed.Leap.Active {
-		col := blue
 		dirArrow := "→"
 		if app.ed.Leap.Dir == editor.DirBack {
-			col = orange
 			dirArrow = "←"
 		}
-		msg := fmt.Sprintf("%s LEAP %s heldL=%v heldR=%v selecting=%v src=%s query=%q last=%q",
-			bufStatus, dirArrow, app.ed.Leap.HeldL, app.ed.Leap.HeldR, app.ed.Leap.Selecting, app.ed.Leap.LastSrc,
-			string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit))
-		if curDir != "" {
-			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
-		}
-		drawText(r, font, left, top, msg, col)
+		status += fmt.Sprintf(" | LEAP %s selecting=%v src=%s query=%q last=%q", dirArrow, app.ed.Leap.Selecting, app.ed.Leap.LastSrc, string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit))
 	} else {
-		msg := fmt.Sprintf("%s EDIT  (Cmd-only Leap. Ctrl+Cmd = Leap Again. Ctrl+C/X/V clipboard)  last=%q",
-			bufStatus, string(app.ed.Leap.LastCommit))
-		if curDir != "" {
-			msg = fmt.Sprintf("%s cwd=%s", msg, curDir)
-		}
-		drawText(r, font, left, top, msg, dim)
+		status += fmt.Sprintf(" | EDIT last=%q", string(app.ed.Leap.LastCommit))
 	}
-	drawText(r, font, left, top+lineH+2, app.lastEvent, dim)
+	if curDir != "" {
+		status += fmt.Sprintf(" | cwd=%s", curDir)
+	}
+	if app.lastEvent != "" {
+		status += fmt.Sprintf(" | %s", app.lastEvent)
+	}
+
+	infoBarH := lineH + 8
 
 	// Text start
-	textTop := top + (lineH * 2) + 12
+	textTop := top
 	y := textTop
 
 	// Help overlay
@@ -1213,7 +1203,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	contentTop := y
-	usableHeight := h - contentTop - 60
+	usableHeight := h - contentTop - infoBarH - 12
 	if usableHeight < lineH {
 		usableHeight = lineH
 	}
@@ -1269,6 +1259,12 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 			_ = r.DrawLine(int32(x), int32(yy), int32(x+cellW), int32(yy))
 		}
 	}
+
+	// Status bar at bottom (inverted colors)
+	barY := h - infoBarH
+	r.SetDrawColor(fg.R, fg.G, fg.B, fg.A)
+	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(barY), W: int32(w), H: int32(infoBarH)})
+	drawText(r, font, left, barY+4, status, bg)
 
 	r.Present()
 }
