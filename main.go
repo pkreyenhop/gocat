@@ -1047,7 +1047,14 @@ func filterArgsToFiles(args []string) []string {
 	out := make([]string, 0, len(args))
 	for _, a := range args {
 		info, err := os.Stat(a)
-		if err == nil && info.Mode().IsRegular() {
+		if err == nil {
+			if info.Mode().IsRegular() {
+				out = append(out, a)
+			}
+			continue
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			// Keep missing files so they can be created at startup.
 			out = append(out, a)
 		}
 	}
