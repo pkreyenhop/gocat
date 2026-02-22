@@ -6,13 +6,13 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 
 ## Core Behavior
 
-- **Leap quasimode**: Hold Right Command to leap forward or Left Command to leap backward. Typing while held builds a query, and the caret jumps to the next match anchored at the origin caret. ESC clears selection or closes the picker; it no longer quits.
+- **Leap quasimode**: Hold Right Command to leap forward or Left Command to leap backward. Typing while held builds a query, and the caret jumps to the next match anchored at the origin caret. ESC clears selection, closes the picker, or closes a clean buffer; dirty buffers stay open and warn in the status bar.
 - **Dual-Cmd selection**: While leaping with one Command key held, press the other Command key to start a selection anchored at the original caret; further Leap moves extend the selection. Ctrl+Cmd (Left/Right) triggers Leap Again without entering quasimode.
-- **Buffers & files**: `Ctrl+B` creates a new untitled buffer; `Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; `Ctrl+Shift+S` saves all. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each.
-- **Editing**: Text input, backspace/delete (with repeat), arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines.
+- **Buffers & files**: `Ctrl+B` creates a new untitled buffer; `Tab`/`Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; `Ctrl+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each.
+- **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard (Cmd is reserved for Leap).
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
-- **Rendering cues**: Helix-inspired dark palette; status line shows mode/query/buffer; caret is a blinking block; selection highlighted; active Leap match underlined.
+- **Rendering cues**: Helix-inspired dark palette; status line shows mode/query/buffer and `*unsaved*`; caret is a blinking block; selection highlighted; active Leap match underlined.
 
 ## Shortcut Quick Reference
 
@@ -20,7 +20,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 | --- | --- |
 | Leap forward / backward | Hold Right Cmd / Left Cmd (type query) |
 | Leap Again | Ctrl+Right Cmd / Ctrl+Left Cmd |
-| New buffer / cycle buffers | Ctrl+B / Tab |
+| New buffer / cycle buffers | Ctrl+B / Tab / Shift+Tab |
 | File picker / load line path | Ctrl+O / Ctrl+L (listing starts with `..`; current line filename opens new buffer or switches if already open) |
 | Save current / save all | Ctrl+W / Ctrl+Shift+S |
 | Close buffer / quit | Ctrl+Q / Ctrl+Shift+Q |
@@ -31,7 +31,8 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 | Kill to EOL | Ctrl+K |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |
 | Navigation | Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select) |
-| Escape | Clear selection; close picker |
+| Delete / line delete | Delete word under/left of caret / Shift+Delete line |
+| Escape | Clear selection; close picker or clean buffer |
 | Help buffer | Ctrl+Shift+/ (Ctrl+?) |
 
 ## Running

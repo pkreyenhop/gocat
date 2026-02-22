@@ -84,7 +84,7 @@ var helpEntries = []helpEntry{
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
 	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
-	{"Escape", "Clear selection; close picker"},
+	{"Escape", "Clear selection; close picker or clean buffer"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
 }
 
