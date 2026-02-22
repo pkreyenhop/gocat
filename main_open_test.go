@@ -128,6 +128,26 @@ func TestFilterArgsToFilesSkipsDirs(t *testing.T) {
 	}
 }
 
+func TestLoadStartupFilesCreatesMissing(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "newfile.txt")
+
+	app := &appState{openRoot: root}
+	app.initBuffers(editor.NewEditor(""))
+
+	loadStartupFiles(app, []string{target})
+
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("expected file to be created: %v", err)
+	}
+	if string(app.ed.Buf) != "" {
+		t.Fatalf("new file should be empty, got %q", string(app.ed.Buf))
+	}
+	if app.currentPath != target {
+		t.Fatalf("currentPath mismatch: %s", app.currentPath)
+	}
+}
+
 func TestOpenLongFileAndLeapAround(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "long.txt")
