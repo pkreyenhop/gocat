@@ -1221,7 +1221,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Purple-leaning palette
 	bg := sdl.Color{R: 68, G: 39, B: 84, A: 255}    // #442754
-	fg := sdl.Color{R: 179, G: 169, B: 230, A: 255} // #B3A9E6
+	fg := sdl.Color{R: 210, G: 202, B: 245, A: 255} // lighter text
 	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}
 	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
 	selCol := sdl.Color{R: 70, G: 50, B: 90, A: 255}
