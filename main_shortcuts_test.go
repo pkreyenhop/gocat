@@ -703,6 +703,26 @@ func TestLeapAgainShortcutsWithCtrlCmd(t *testing.T) {
 	}
 }
 
+func TestDeleteKeyDeletesWord(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("hello world"))
+	app.ed.Caret = 1 // inside "hello"
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_DELETE},
+	}) {
+		t.Fatal("unexpected quit on Delete")
+	}
+	if got := string(app.ed.Buf); got != " world" {
+		t.Fatalf("delete word: got %q", got)
+	}
+	if app.buffers[app.bufIdx].dirty == false {
+		t.Fatalf("buffer should be marked dirty after delete word")
+	}
+}
+
 type stubClip struct {
 	text string
 }

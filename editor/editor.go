@@ -1,6 +1,8 @@
 // Package editor provides headless editing and Canon-Cat-inspired Leap logic.
 package editor
 
+import "unicode"
+
 // Core editing and Leap logic. This package is UI-agnostic to keep logic testable.
 
 type Dir int
@@ -239,6 +241,41 @@ func (e *Editor) BackspaceOrDeleteSelection(isBackspace bool) {
 		return
 	}
 	e.Buf = append(e.Buf[:e.Caret], e.Buf[e.Caret+1:]...)
+}
+
+// DeleteWordAtCaret removes the word under the caret (letters/digits/underscore).
+// If the caret is on a non-word rune, deletes that single rune instead.
+func (e *Editor) DeleteWordAtCaret() bool {
+	if e == nil {
+		return false
+	}
+	e.recordUndo()
+	if e.Sel.Active {
+		e.deleteSelection()
+		return true
+	}
+	if len(e.Buf) == 0 || e.Caret >= len(e.Buf) {
+		return false
+	}
+	isWord := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
+	r := e.Buf[e.Caret]
+	if !isWord(r) {
+		e.Buf = append(e.Buf[:e.Caret], e.Buf[e.Caret+1:]...)
+		return true
+	}
+	start := e.Caret
+	for start > 0 && isWord(e.Buf[start-1]) {
+		start--
+	}
+	end := e.Caret
+	for end < len(e.Buf) && isWord(e.Buf[end]) {
+		end++
+	}
+	e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+	e.Caret = start
+	return true
 }
 
 func (e *Editor) deleteSelection() {
