@@ -249,19 +249,39 @@ func (e *Editor) DeleteWordAtCaret() bool {
 	if e == nil {
 		return false
 	}
+	isWord := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
 	e.recordUndo()
 	if e.Sel.Active {
 		e.deleteSelection()
 		return true
 	}
 	if len(e.Buf) == 0 || e.Caret >= len(e.Buf) {
+		if e.Caret == len(e.Buf) && e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
+			start := e.Caret - 1
+			for start > 0 && isWord(e.Buf[start-1]) {
+				start--
+			}
+			e.Buf = append(e.Buf[:start], e.Buf[e.Caret:]...)
+			e.Caret = start
+			return true
+		}
 		return false
-	}
-	isWord := func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 	}
 	r := e.Buf[e.Caret]
 	if !isWord(r) {
+		// If caret is right after a word, delete that word instead.
+		if e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
+			start := e.Caret - 1
+			for start > 0 && isWord(e.Buf[start-1]) {
+				start--
+			}
+			end := e.Caret
+			e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+			e.Caret = start
+			return true
+		}
 		e.Buf = append(e.Buf[:e.Caret], e.Buf[e.Caret+1:]...)
 		return true
 	}

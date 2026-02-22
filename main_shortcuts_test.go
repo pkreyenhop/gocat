@@ -721,6 +721,25 @@ func TestDeleteKeyDeletesWord(t *testing.T) {
 	if app.buffers[app.bufIdx].dirty == false {
 		t.Fatalf("buffer should be marked dirty after delete word")
 	}
+
+	// Deleting when caret is after a word should remove the word to the left.
+	app.initBuffers(editor.NewEditor("hello world"))
+	app.buffers[0].dirty = false
+	app.ed.Caret = len("hello") // caret right after "hello"
+	sdl.SetModState(0)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_DELETE},
+	}) {
+		t.Fatal("unexpected quit on Delete after word")
+	}
+	if got := string(app.ed.Buf); got != " world" {
+		t.Fatalf("delete word to left: got %q", got)
+	}
+	if !app.buffers[app.bufIdx].dirty {
+		t.Fatalf("buffer should be dirty after delete word to left")
+	}
 }
 
 func TestShiftDeleteDeletesLine(t *testing.T) {
