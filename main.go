@@ -1311,7 +1311,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	contentTop := y
-	usableHeight := h - contentTop - infoBarH*2 - 12
+	usableHeight := h - contentTop - infoBarH*2 - 16
 	if usableHeight < lineH {
 		usableHeight = lineH
 	}
@@ -1403,10 +1403,10 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Input line at very bottom
 	inputY := h - infoBarH
-	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
+	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(inputY), W: int32(w), H: int32(infoBarH)})
 	if app.inputActive {
-		drawText(r, font, left, inputY+4, fmt.Sprintf("%s%s", app.inputPrompt, app.inputValue), barFg)
+		drawText(r, font, left, inputY+4, fmt.Sprintf("%s%s", app.inputPrompt, app.inputValue), fg)
 	}
 
 	r.Present()
