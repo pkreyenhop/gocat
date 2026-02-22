@@ -5,6 +5,8 @@
 - `editor/` — UI-free core: buffer management, leap/search, selection, clipboard abstraction, and helpers for line/column math.
 - `editor/editor_logic_test.go` — behaviour-focused tests that exercise the headless editor via a small fixture DSL.
 - Root tests: `main_open_test.go` (open/find helpers + startup filtering), `main_buffer_test.go` (buffer switching), `main_shortcuts_test.go` (shortcut/chaos/latency coverage), `main_help_test.go` (README/help sync), `main_gui_test.go` (GUI smoke/input, gated behind `-tags gui`).
+- `RULES.md` — canonical list of implemented behaviours; keep in sync when changing shortcuts or UI flows.
+- `README.md` — user-facing overview/shortcuts; must stay consistent with help entries and RULES.
 - `go.mod` / `go.sum` — module metadata (`gc`). Fonts are bundled under `font/` (JetBrains Mono); `pickFont()` loads `font/JetBrainsMono-Regular.ttf`.
 
 ## Build, Test, and Development Commands
