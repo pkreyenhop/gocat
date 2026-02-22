@@ -50,6 +50,10 @@ type appState struct {
 	blinkAt     time.Time
 	lastSpaceAt time.Time
 	lastSpaceLn int
+	inputActive bool
+	inputPrompt string
+	inputValue  string
+	inputKind   string
 	win         *sdl.Window
 	lastW       int
 	lastH       int
@@ -245,6 +249,11 @@ func main() {
 // It returns false when the app should quit.
 func handleEvent(app *appState, ev sdl.Event) bool {
 	ed := app.ed
+
+	// Input prompt takes priority (save dialog)
+	if app.inputActive {
+		return handleInputEvent(app, ev)
+	}
 
 	// Modal open prompt takes precedence over other input
 	if app.open.Active {
@@ -737,7 +746,11 @@ func saveCurrent(app *appState) error {
 	}
 	path := app.currentPath
 	if path == "" {
-		app.lastEvent = "Save: enter filename in info line"
+		app.inputActive = true
+		app.inputPrompt = "Save as: "
+		app.inputValue = ""
+		app.inputKind = "save"
+		app.lastEvent = "Save: enter filename in input line, Enter to confirm, Esc to cancel"
 		return fmt.Errorf("no path")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -1298,7 +1311,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	contentTop := y
-	usableHeight := h - contentTop - infoBarH - 12
+	usableHeight := h - contentTop - infoBarH*2 - 12
 	if usableHeight < lineH {
 		usableHeight = lineH
 	}
@@ -1371,8 +1384,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		}
 	}
 
-	// Status bar at bottom (inverted colors)
-	barY := h - infoBarH
+	// Status bar above input line (inverted colors)
+	barY := h - infoBarH*2
 	barBg := sdl.Color{R: 35, G: 18, B: 43, A: 255}    // darker info bar
 	barFg := sdl.Color{R: 201, G: 182, B: 242, A: 255} // #C9B6F2
 	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
@@ -1386,6 +1399,14 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 			}
 			drawText(r, font, rx, barY+4, rightText, barFg)
 		}
+	}
+
+	// Input line at very bottom
+	inputY := h - infoBarH
+	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
+	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(inputY), W: int32(w), H: int32(infoBarH)})
+	if app.inputActive {
+		drawText(r, font, left, inputY+4, fmt.Sprintf("%s%s", app.inputPrompt, app.inputValue), barFg)
 	}
 
 	r.Present()
@@ -1649,4 +1670,69 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+func handleInputEvent(app *appState, ev sdl.Event) bool {
+	switch e := ev.(type) {
+	case *sdl.KeyboardEvent:
+		if e.Type != sdl.KEYDOWN || e.Repeat != 0 {
+			return true
+		}
+		switch e.Keysym.Sym {
+		case sdl.K_ESCAPE:
+			app.inputActive = false
+			app.inputValue = ""
+			app.inputPrompt = ""
+			app.inputKind = ""
+			app.lastEvent = "Input cancelled"
+			return true
+		case sdl.K_BACKSPACE:
+			if len(app.inputValue) > 0 {
+				rs := []rune(app.inputValue)
+				app.inputValue = string(rs[:len(rs)-1])
+			}
+			return true
+		case sdl.K_RETURN, sdl.K_KP_ENTER:
+			switch app.inputKind {
+			case "save":
+				name := strings.TrimSpace(app.inputValue)
+				if name == "" {
+					app.lastEvent = "SAVE ERR: filename required"
+					return true
+				}
+				path := name
+				if !filepath.IsAbs(path) {
+					root := app.openRoot
+					if root == "" {
+						if cwd, err := os.Getwd(); err == nil {
+							root = cwd
+						}
+					}
+					path = filepath.Join(root, name)
+				}
+				app.currentPath = path
+				if app.bufIdx >= 0 && app.bufIdx < len(app.buffers) {
+					app.buffers[app.bufIdx].path = path
+				}
+				app.inputActive = false
+				app.inputValue = ""
+				app.inputPrompt = ""
+				app.inputKind = ""
+				if err := saveCurrent(app); err != nil {
+					app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
+				} else {
+					app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
+				}
+			default:
+				app.inputActive = false
+			}
+			return true
+		}
+	case *sdl.TextInputEvent:
+		text := textInputString(e)
+		if text != "" && utf8.ValidString(text) {
+			app.inputValue += text
+		}
+		return true
+	}
+	return true
 }

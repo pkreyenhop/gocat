@@ -345,6 +345,46 @@ func TestSaveAllNoDirtyBuffers(t *testing.T) {
 	}
 }
 
+func TestSavePromptOnUnnamedBuffer(t *testing.T) {
+	root := t.TempDir()
+	app := appState{openRoot: root}
+	app.initBuffers(editor.NewEditor("hi"))
+	app.buffers[0].dirty = true
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_w},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+W")
+	}
+	if !app.inputActive {
+		t.Fatalf("save should activate input prompt for filename")
+	}
+
+	// Type filename and press Enter.
+	app.inputValue = "file.txt"
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_RETURN},
+	}) {
+		t.Fatal("unexpected quit on Enter")
+	}
+	if app.inputActive {
+		t.Fatalf("input prompt should close after saving")
+	}
+	wantPath := filepath.Join(root, "file.txt")
+	if app.currentPath != wantPath {
+		t.Fatalf("path: want %s, got %s", wantPath, app.currentPath)
+	}
+	data, err := os.ReadFile(wantPath)
+	if err != nil || string(data) != "hi" {
+		t.Fatalf("saved file mismatch: %v data=%q", err, string(data))
+	}
+}
+
 func TestLoadAndSaveLeavesFileUnchanged(t *testing.T) {
 	ensureSDL(t)
 	root := t.TempDir()
