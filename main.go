@@ -1221,7 +1221,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Purple-leaning palette
 	bg := sdl.Color{R: 68, G: 39, B: 84, A: 255}    // #442754
-	fg := sdl.Color{R: 210, G: 202, B: 245, A: 255} // lighter text
+	fg := sdl.Color{R: 184, G: 169, B: 217, A: 255} // #B8A9D9
 	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}
 	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
 	selCol := sdl.Color{R: 70, G: 50, B: 90, A: 255}
@@ -1312,8 +1312,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Gutter background
 	gutterX := left - gutterW
-	gutterBg := sdl.Color{R: 26, G: 13, B: 33, A: 255}
-	r.SetDrawColor(gutterBg.R, gutterBg.G, gutterBg.B, gutterBg.A)
+	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	_ = r.FillRect(&sdl.Rect{X: int32(gutterX), Y: int32(contentTop), W: int32(gutterW - 6), H: int32(visibleLines * lineH)})
 
 	// Draw selection background (monospace-based)
@@ -1328,7 +1327,14 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
 		line := lines[i]
 		lnText := fmt.Sprintf("%4d ", i+1)
-		drawText(r, font, left-gutterW, y, lnText, fg)
+		lnCol := fg
+		if i == cLine {
+			lnCol = sdl.Color{R: 227, G: 207, B: 255, A: 255} // #E3CFFF
+			// Highlight current line background
+			r.SetDrawColor(selCol.R, selCol.G, selCol.B, selCol.A)
+			_ = r.FillRect(&sdl.Rect{X: int32(left - gutterW), Y: int32(y), W: int32(w - (left - gutterW)), H: int32(lineH)})
+		}
+		drawText(r, font, left-gutterW, y, lnText, lnCol)
 		drawText(r, font, left, y, expandTabs(line, tabWidth), fg)
 
 		if i == cLine && blinkOn {
