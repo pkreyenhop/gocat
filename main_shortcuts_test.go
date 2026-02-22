@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"sdl-alt-test/editor"
+	"gc/editor"
 
 	"github.com/veandco/go-sdl2/sdl"
 )

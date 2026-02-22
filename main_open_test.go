@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"sdl-alt-test/editor"
+	"gc/editor"
 )
 
 func TestFindMatchesAndOpenPath(t *testing.T) {

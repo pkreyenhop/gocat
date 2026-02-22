@@ -5,7 +5,7 @@
 - `editor/` — UI-free core: buffer management, leap/search, selection, clipboard abstraction, and helpers for line/column math.
 - `editor/editor_logic_test.go` — behaviour-focused tests that exercise the headless editor via a small fixture DSL.
 - Root tests: `main_open_test.go` (open/find helpers + startup filtering), `main_buffer_test.go` (buffer switching), `main_shortcuts_test.go` (shortcut/chaos/latency coverage), `main_help_test.go` (README/help sync), `main_gui_test.go` (GUI smoke/input, gated behind `-tags gui`).
-- `go.mod` / `go.sum` — module metadata (`sdl-alt-test`). Fonts and other assets are resolved at runtime by `pickFont()`; none are tracked in the repo.
+- `go.mod` / `go.sum` — module metadata (`gc`). Fonts and other assets are resolved at runtime by `pickFont()`; none are tracked in the repo.
 
 ## Build, Test, and Development Commands
 - `go run .` — launch the SDL prototype window (needs SDL2 + SDL2_ttf headers/libs available to CGO).

@@ -16,7 +16,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"sdl-alt-test/editor"
+	"gc/editor"
 
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"

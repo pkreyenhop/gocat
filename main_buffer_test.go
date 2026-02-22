@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"sdl-alt-test/editor"
+	"gc/editor"
 )
 
 func TestAddAndSwitchBuffers(t *testing.T) {
