@@ -1482,26 +1482,11 @@ func modsString(m sdl.Keymod) string {
 // ======================
 
 func pickFont() string {
-	candidates := []string{
-		"/Library/Fonts/JetBrainsMono-Regular.ttf",
-		"/System/Library/Fonts/SFMono-Regular.otf",
-		"/Library/Fonts/FiraCode-Regular.ttf",
-		"/Library/Fonts/CascadiaMono.ttf",
-		"/System/Library/Fonts/Menlo.ttc",
-		"/Library/Fonts/Menlo.ttc",
-		"/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-		"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	local := "DejaVuSansMono.ttf"
+	local := filepath.Join("font", "JetBrainsMono-Regular.ttf")
 	if _, err := os.Stat(local); err == nil {
 		return local
 	}
-	panic("No usable mono font found. Install JetBrains Mono / Fira Code / Cascadia / Menlo / DejaVu/Liberation or place DejaVuSansMono.ttf next to main.go")
+	panic("JetBrainsMono-Regular.ttf not found in ./font; ensure the font file is present")
 }
 
 func must(err error) {

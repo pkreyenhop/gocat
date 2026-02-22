@@ -36,7 +36,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 
 ## Running
 
-Requires Go 1.26+ (per `go.mod`) and SDL2/SDL2_ttf libraries available to CGO (e.g., via Homebrew on macOS). Build the binary as `gc` and run it with:
+Requires Go 1.26+ (per `go.mod`) and SDL2/SDL2_ttf libraries available to CGO (e.g., via Homebrew on macOS). The UI expects `font/JetBrainsMono-Regular.ttf` to exist relative to the binary. Build the binary as `gc` and run it with:
 
 ```sh
 go build -o gc .
