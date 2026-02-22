@@ -71,7 +71,7 @@ var helpEntries = []helpEntry{
 	{"Leap forward / backward", "Hold Right Cmd / Left Cmd (type query)"},
 	{"Leap Again", "Ctrl+Right Cmd / Ctrl+Left Cmd"},
 	{"New buffer / cycle buffers", "Ctrl+B / Tab"},
-	{"File picker / load match", "Ctrl+O / Ctrl+L"},
+	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
 	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
 	{"Close buffer / quit", "Ctrl+Q / Ctrl+Shift+Q"},
 	{"Undo", "Ctrl+U"},
@@ -727,9 +727,6 @@ func loadFileAtCaret(app *appState) error {
 		return fmt.Errorf("no active buffer")
 	}
 	slot := &app.buffers[app.bufIdx]
-	if !slot.picker {
-		return fmt.Errorf("not in file picker")
-	}
 	lines := editor.SplitLines(app.ed.Buf)
 	lineIdx := editor.CaretLineAt(lines, app.ed.Caret)
 	if lineIdx < 0 || lineIdx >= len(lines) {
@@ -739,10 +736,28 @@ func loadFileAtCaret(app *appState) error {
 	if line == "" {
 		return fmt.Errorf("empty line")
 	}
-	if filepath.IsAbs(line) || strings.Contains(line, "..") {
-		return fmt.Errorf("invalid path")
+
+	root := app.openRoot
+	if root == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
 	}
-	full := filepath.Join(slot.pickerRoot, line)
+	if slot.picker && slot.pickerRoot != "" {
+		root = slot.pickerRoot
+	}
+
+	full := line
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(root, line)
+	}
+	full = filepath.Clean(full)
+	if root != "" {
+		if rel, err := filepath.Rel(root, full); err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("refusing to open outside %s", root)
+		}
+	}
+
 	// If already loaded, jump to that buffer.
 	for i, b := range app.buffers {
 		if filepath.Clean(b.path) == filepath.Clean(full) {

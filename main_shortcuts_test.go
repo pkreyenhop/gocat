@@ -140,20 +140,8 @@ func TestCtrlLReusesLoadedBufferOrAddsNew(t *testing.T) {
 	app := appState{openRoot: root}
 	app.initBuffers(editor.NewEditor(""))
 
-	// Open picker
-	sdl.SetModState(sdl.KMOD_CTRL)
-	if !handleEvent(&app, &sdl.KeyboardEvent{
-		Type:   sdl.KEYDOWN,
-		Repeat: 0,
-		Keysym: sdl.Keysym{Sym: sdl.K_o},
-	}) {
-		t.Fatal("unexpected quit on Ctrl+O")
-	}
-	if got := len(app.buffers); got != 2 {
-		t.Fatalf("expected picker buffer, got %d buffers", got)
-	}
-
-	// Move caret to second line (two.txt) and load into new buffer.
+	// Buffer lists file names directly; Ctrl+L should load under caret into new buffer.
+	app.ed.Buf = []rune("one.txt\ntwo.txt\n")
 	app.ed.Caret = len([]rune("one.txt")) + 1
 	sdl.SetModState(sdl.KMOD_CTRL)
 	if !handleEvent(&app, &sdl.KeyboardEvent{
@@ -163,15 +151,15 @@ func TestCtrlLReusesLoadedBufferOrAddsNew(t *testing.T) {
 	}) {
 		t.Fatal("unexpected quit on Ctrl+L for two.txt")
 	}
-	if got := len(app.buffers); got != 3 {
+	if got := len(app.buffers); got != 2 {
 		t.Fatalf("Ctrl+L should open new buffer, got %d", got)
 	}
 	if filepath.Clean(app.currentPath) != filepath.Clean(two) {
 		t.Fatalf("active path: want %s, got %s", two, app.currentPath)
 	}
 
-	// Go back to picker buffer and load the same file again; should switch to existing buffer.
-	app.bufIdx = 1
+	// Go back to listing buffer and load the same file again; should switch to existing buffer.
+	app.bufIdx = 0
 	app.syncActiveBuffer()
 	app.ed.Caret = len([]rune("one.txt")) + 1
 	sdl.SetModState(sdl.KMOD_CTRL)
@@ -182,11 +170,55 @@ func TestCtrlLReusesLoadedBufferOrAddsNew(t *testing.T) {
 	}) {
 		t.Fatal("unexpected quit on Ctrl+L for existing")
 	}
-	if got := len(app.buffers); got != 3 {
+	if got := len(app.buffers); got != 2 {
 		t.Fatalf("should not add buffer when already open; got %d", got)
 	}
-	if filepath.Clean(app.currentPath) != filepath.Clean(two) || app.bufIdx != 2 {
+	if filepath.Clean(app.currentPath) != filepath.Clean(two) || app.bufIdx != 1 {
 		t.Fatalf("should switch to existing buffer; path=%s idx=%d", app.currentPath, app.bufIdx)
+	}
+}
+
+func TestCtrlLRespectsRootAndAbsolute(t *testing.T) {
+	ensureSDL(t)
+	root := t.TempDir()
+	sub := filepath.Join(root, "dir")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	absFile := filepath.Join(sub, "abs.txt")
+	if err := os.WriteFile(absFile, []byte("ABS"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	app := appState{openRoot: root}
+	app.initBuffers(editor.NewEditor(absFile + "\n"))
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_l},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+L abs")
+	}
+	if filepath.Clean(app.currentPath) != filepath.Clean(absFile) {
+		t.Fatalf("should open absolute file within root, got %s", app.currentPath)
+	}
+
+	// Outside root should be rejected
+	app.bufIdx = 0
+	app.syncActiveBuffer()
+	app.ed.Caret = 0
+	app.ed.Buf = []rune("/tmp/doesnotexist\n")
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_l},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+L outside root")
+	}
+	if len(app.buffers) != 2 {
+		t.Fatalf("should not add buffer for invalid path; buffers=%d", len(app.buffers))
 	}
 }
 

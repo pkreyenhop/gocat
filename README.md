@@ -21,7 +21,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 | Leap forward / backward | Hold Right Cmd / Left Cmd (type query) |
 | Leap Again | Ctrl+Right Cmd / Ctrl+Left Cmd |
 | New buffer / cycle buffers | Ctrl+B / Tab |
-| File picker / load match | Ctrl+O / Ctrl+L (after leaping to filename) |
+| File picker / load line path | Ctrl+O / Ctrl+L (current line filename; opens new buffer or switches if already open) |
 | Save current / save all | Ctrl+W / Ctrl+Shift+S |
 | Close buffer / quit | Ctrl+Q / Ctrl+Shift+Q |
 | Undo | Ctrl+U |
