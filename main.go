@@ -429,7 +429,11 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 				}
 			}
 			if sym == sdl.K_TAB && !ed.Leap.Active {
-				app.switchBuffer(1)
+				delta := 1
+				if (mods & sdl.KMOD_SHIFT) != 0 {
+					delta = -1
+				}
+				app.switchBuffer(delta)
 				app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
 				return true
 			}

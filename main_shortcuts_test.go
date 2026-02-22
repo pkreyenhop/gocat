@@ -56,6 +56,19 @@ func TestShortcutCtrlBCreatesBufferAndTabCycles(t *testing.T) {
 	if app.bufIdx != 0 {
 		t.Fatalf("Tab should cycle to next buffer modulo N; got idx=%d", app.bufIdx)
 	}
+
+	// Shift+Tab cycles backward
+	sdl.SetModState(sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_TAB, Mod: sdl.KMOD_LSHIFT},
+	}) {
+		t.Fatal("unexpected quit on Shift+Tab")
+	}
+	if app.bufIdx != 1 {
+		t.Fatalf("Shift+Tab should cycle backward; got idx=%d", app.bufIdx)
+	}
 }
 
 func TestShortcutCtrlQQuitsImmediateWithShift(t *testing.T) {
