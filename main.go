@@ -1356,7 +1356,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Status bar at bottom (inverted colors)
 	barY := h - infoBarH
-	barBg := sdl.Color{R: 58, G: 31, B: 70, A: 255}    // #3A1F46
+	barBg := sdl.Color{R: 35, G: 18, B: 43, A: 255}    // darker info bar
 	barFg := sdl.Color{R: 201, G: 182, B: 242, A: 255} // #C9B6F2
 	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
 	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(barY), W: int32(w), H: int32(infoBarH)})
