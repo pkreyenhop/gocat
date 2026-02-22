@@ -595,9 +595,14 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					if lineStart < 0 {
 						lineStart = 0
 					}
-					ed.Caret = lineStart
+					// Move to first non-tab/space to compute current indent
+					indentEnd := lineStart
+					for indentEnd < len(ed.Buf) && (ed.Buf[indentEnd] == '\t' || ed.Buf[indentEnd] == ' ') {
+						indentEnd++
+					}
+					ed.Caret = indentEnd
 					ed.InsertText("\t")
-					app.lastSpaceLn = -1
+					app.lastSpaceLn = lineIdx
 					return true
 				}
 			} else {

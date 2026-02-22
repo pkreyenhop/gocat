@@ -401,6 +401,18 @@ func TestDoubleSpaceIndentsLine(t *testing.T) {
 	if app.ed.Caret != 1 {
 		t.Fatalf("caret should sit after tab, got %d", app.ed.Caret)
 	}
+
+	// Another double-space should indent further (two tabs)
+	app.ed.Caret = 1 // after first tab
+	if !handleEvent(&app, &sdl.TextInputEvent{Text: [32]byte{' '}}) {
+		t.Fatal("quit on third space")
+	}
+	if !handleEvent(&app, &sdl.TextInputEvent{Text: [32]byte{' '}}) {
+		t.Fatal("quit on fourth space")
+	}
+	if got := string(app.ed.Buf); got != "\t\tabc" {
+		t.Fatalf("second indent expected two tabs, got %q", got)
+	}
 }
 
 func TestCtrlCommaPeriodPageScroll(t *testing.T) {
