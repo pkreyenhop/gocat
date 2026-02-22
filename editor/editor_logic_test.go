@@ -69,6 +69,18 @@ func TestFindInDir_Backward_Wrap(t *testing.T) {
 	}
 }
 
+func TestFindInDir_IgnoresCase(t *testing.T) {
+	hay := []rune("One two ONE")
+	needle := []rune("one")
+
+	if pos, ok := FindInDir(hay, needle, 0, DirFwd, true); !ok || pos != 0 {
+		t.Fatalf("forward case-insensitive: pos=%d ok=%v", pos, ok)
+	}
+	if pos, ok := FindInDir(hay, []rune("ONE"), len(hay), DirBack, true); !ok || pos != len([]rune("One two ")) {
+		t.Fatalf("backward case-insensitive: pos=%d ok=%v", pos, ok)
+	}
+}
+
 func TestLeap_AnchoredAtOrigin_Forward(t *testing.T) {
 	// Leap refinements are anchored at the origin caret; this confirms a forward
 	// leap moves from position 0 to the first "hello" while committing the query.

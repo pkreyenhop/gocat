@@ -601,6 +601,7 @@ func CaretColAt(lines []string, caret int) int {
 // ======================
 
 // FindInDir searches for needle starting near start in the given direction, optionally wrapping.
+// The search is case-insensitive.
 func FindInDir(hay []rune, needle []rune, start int, dir Dir, wrap bool) (int, bool) {
 	if len(needle) == 0 {
 		return start, true
@@ -608,54 +609,56 @@ func FindInDir(hay []rune, needle []rune, start int, dir Dir, wrap bool) (int, b
 	if len(hay) == 0 || len(needle) > len(hay) {
 		return -1, false
 	}
+	hayFold := unicode.ToLower
+	needleFold := unicode.ToLower
 	start = clamp(start, 0, len(hay))
 
 	if dir == DirFwd {
-		if pos, ok := scanFwd(hay, needle, start); ok {
+		if pos, ok := scanFwdFold(hay, needle, start, hayFold, needleFold); ok {
 			return pos, true
 		}
 		if wrap {
-			return scanFwd(hay, needle, 0)
+			return scanFwdFold(hay, needle, 0, hayFold, needleFold)
 		}
 		return -1, false
 	}
 
 	// backward
 	searchStart := start - 1 // search strictly before start to get the previous match
-	if pos, ok := scanBack(hay, needle, searchStart); ok {
+	if pos, ok := scanBackFold(hay, needle, searchStart, hayFold, needleFold); ok {
 		return pos, true
 	}
 	if wrap {
-		return scanBack(hay, needle, len(hay))
+		return scanBackFold(hay, needle, len(hay), hayFold, needleFold)
 	}
 	return -1, false
 }
 
-func scanFwd(hay, needle []rune, start int) (int, bool) {
+func scanFwdFold(hay, needle []rune, start int, hf, nf func(rune) rune) (int, bool) {
 	for i := start; i+len(needle) <= len(hay); i++ {
-		if matchAt(hay, needle, i) {
+		if matchAtFold(hay, needle, i, hf, nf) {
 			return i, true
 		}
 	}
 	return -1, false
 }
 
-func scanBack(hay, needle []rune, start int) (int, bool) {
+func scanBackFold(hay, needle []rune, start int, hf, nf func(rune) rune) (int, bool) {
 	if start < 0 {
 		return -1, false
 	}
 	lastStart := min(start, len(hay)-len(needle))
 	for i := lastStart; i >= 0; i-- {
-		if matchAt(hay, needle, i) {
+		if matchAtFold(hay, needle, i, hf, nf) {
 			return i, true
 		}
 	}
 	return -1, false
 }
 
-func matchAt(hay, needle []rune, i int) bool {
+func matchAtFold(hay, needle []rune, i int, hf, nf func(rune) rune) bool {
 	for j := range needle {
-		if hay[i+j] != needle[j] {
+		if hf(hay[i+j]) != nf(needle[j]) {
 			return false
 		}
 	}
