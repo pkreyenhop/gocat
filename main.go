@@ -1176,6 +1176,13 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	r.Clear()
 
+	// No active editor: draw empty screen and bail.
+	if app == nil || app.ed == nil {
+		drawText(r, font, 12, 12, "gc| no buffer open", fg)
+		r.Present()
+		return
+	}
+
 	cellW, _, _ := font.SizeUTF8("M")
 	lineH := font.Height() + 4
 	left := 12
