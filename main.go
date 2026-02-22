@@ -137,6 +137,13 @@ func (app *appState) addPickerBuffer(lines []string) {
 	app.syncActiveBuffer()
 }
 
+func (app *appState) markDirty() {
+	if app == nil || len(app.buffers) == 0 {
+		return
+	}
+	app.buffers[app.bufIdx].dirty = true
+}
+
 func (app *appState) switchBuffer(delta int) {
 	if len(app.buffers) == 0 {
 		return
@@ -357,10 +364,12 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					return true
 				case sdl.K_k:
 					ed.KillToLineEnd(editor.SplitLines(ed.Buf))
+					app.markDirty()
 					return true
 				case sdl.K_u:
 					ed.Undo()
 					app.lastEvent = "Undo"
+					app.markDirty()
 					return true
 				case sdl.K_SLASH:
 					if (mods & sdl.KMOD_SHIFT) != 0 {
@@ -373,6 +382,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					}
 					toggleComment(ed)
 					app.lastEvent = "Toggled comment"
+					app.markDirty()
 					return true
 				case sdl.K_o:
 					listRoot := app.openRoot
@@ -426,9 +436,11 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					return true
 				case sdl.K_x:
 					ed.CutSelection()
+					app.markDirty()
 					return true
 				case sdl.K_v:
 					ed.PasteClipboard()
+					app.markDirty()
 					return true
 				}
 			}
@@ -540,8 +552,10 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			switch sym {
 			case sdl.K_BACKSPACE:
 				ed.BackspaceOrDeleteSelection(true)
+				app.markDirty()
 			case sdl.K_DELETE:
 				ed.BackspaceOrDeleteSelection(false)
+				app.markDirty()
 			case sdl.K_LEFT:
 				ed.MoveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
 			case sdl.K_RIGHT:
@@ -557,6 +571,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			case sdl.K_RETURN, sdl.K_KP_ENTER:
 				if e.Repeat == 0 { // avoid spamming newlines on OS-level repeat
 					ed.InsertText("\n")
+					app.markDirty()
 				}
 			}
 		}
@@ -610,6 +625,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 				app.lastSpaceLn = -1
 			}
 			ed.InsertText(text)
+			app.markDirty()
 		}
 	}
 
