@@ -32,6 +32,7 @@
 
 ## Commit & Pull Request Guidelines
 - Commit messages should be present-tense and imperative (e.g., “Add wrap-around leap test”). Mention key behaviours and commands run (`go test ./editor` or `go test ./...`).
+- Run `go fix ./...` before committing when changes touch Go code.
 - PRs: include a short summary of user-visible changes (UI or behaviour), call out dependency shifts (SDL/toolchain), and link related issues. Screenshots or screen recordings are helpful if rendering changes.
 
 ## Environment & Configuration Notes
