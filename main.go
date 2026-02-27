@@ -67,6 +67,7 @@ type appState struct {
 	scrollLine  int
 	showHelp    bool
 	syntaxHL    *syntaxHighlighter
+	syntaxCheck *goSyntaxChecker
 	gopls       *goplsClient
 	noGopls     bool
 }
@@ -80,7 +81,7 @@ type helpEntry struct {
 var helpEntries = []helpEntry{
 	{"Leap forward / backward", "Hold Right Cmd / Left Cmd (type query)"},
 	{"Leap Again", "Ctrl+Right Cmd / Ctrl+Left Cmd"},
-	{"New buffer / cycle buffers", "Ctrl+B / Tab"},
+	{"New buffer / cycle buffers", "Ctrl+B / Ctrl+Tab"},
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
 	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
 	{"Close buffer / quit", "Ctrl+Q / Ctrl+Shift+Q"},
@@ -90,6 +91,7 @@ var helpEntries = []helpEntry{
 	{"Buffer start / end", "Ctrl+Shift+A / Ctrl+Shift+E"},
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
+	{"Autocomplete (Go mode)", "Tab"},
 	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
 	{"Escape", "Clear selection; close picker or clean buffer"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
@@ -213,15 +215,16 @@ func main() {
 	wX, wY := win.GetPosition()
 	root, _ := os.Getwd()
 	app := appState{
-		blinkAt:  time.Now(),
-		win:      win,
-		lastW:    int(wW),
-		lastH:    int(wH),
-		lastX:    wX,
-		lastY:    wY,
-		openRoot: root,
-		syntaxHL: newGoHighlighter(),
-		gopls:    newGoplsClient(),
+		blinkAt:     time.Now(),
+		win:         win,
+		lastW:       int(wW),
+		lastH:       int(wH),
+		lastX:       wX,
+		lastY:       wY,
+		openRoot:    root,
+		syntaxHL:    newGoHighlighter(),
+		syntaxCheck: newGoSyntaxChecker(),
+		gopls:       newGoplsClient(),
 	}
 	app.initBuffers(ed)
 
@@ -331,6 +334,14 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
 			if ctrlHeld {
 				switch sym {
+				case sdl.K_TAB:
+					delta := 1
+					if (mods & sdl.KMOD_SHIFT) != 0 {
+						delta = -1
+					}
+					app.switchBuffer(delta)
+					app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
+					return true
 				case sdl.K_q:
 					if (mods & sdl.KMOD_SHIFT) != 0 {
 						app.lastEvent = "Quit (discard all buffers)"
@@ -469,12 +480,9 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 				}
 			}
 			if sym == sdl.K_TAB && !ed.Leap.Active {
-				delta := 1
-				if (mods & sdl.KMOD_SHIFT) != 0 {
-					delta = -1
+				if tryManualCompletion(app) {
+					app.lastEvent = "Completed"
 				}
-				app.switchBuffer(delta)
-				app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
 				return true
 			}
 		}
@@ -655,7 +663,6 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			}
 			ed.InsertText(text)
 			app.markDirty()
-			maybeAutoComplete(app, text)
 		}
 	}
 
@@ -1255,6 +1262,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	syntaxHeading := sdl.Color{R: 246, G: 193, B: 119, A: 255}
 	syntaxLink := sdl.Color{R: 128, G: 214, B: 230, A: 255}
 	syntaxPunctuation := sdl.Color{R: 187, G: 161, B: 221, A: 255}
+	syntaxErr := sdl.Color{R: 242, G: 118, B: 118, A: 255}
 
 	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	r.Clear()
@@ -1286,6 +1294,10 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	lineStyles := map[int][]tokenStyle(nil)
 	if app.syntaxHL != nil {
 		lineStyles = app.syntaxHL.lineStyleFor(app.currentPath, app.ed.Buf, lines)
+	}
+	lineErrs := map[int]struct{}(nil)
+	if app.syntaxCheck != nil {
+		lineErrs = app.syntaxCheck.lineErrorsFor(app.currentPath, app.ed.Buf)
 	}
 	bufStatus := bufferLabel(app)
 	curDir := app.openRoot
@@ -1369,6 +1381,18 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 			// Highlight current line background
 			r.SetDrawColor(selCol.R, selCol.G, selCol.B, selCol.A)
 			_ = r.FillRect(&sdl.Rect{X: int32(left - gutterW), Y: int32(y), W: int32(w - (left - gutterW)), H: int32(lineH)})
+		}
+		if _, ok := lineErrs[i]; ok {
+			r.SetDrawColor(syntaxErr.R, syntaxErr.G, syntaxErr.B, syntaxErr.A)
+			mw := max(4, cellW/3)
+			mh := max(4, lineH/3)
+			my := y + (lineH-mh)/2
+			_ = r.FillRect(&sdl.Rect{
+				X: int32(left - gutterW + 2),
+				Y: int32(my),
+				W: int32(mw),
+				H: int32(mh),
+			})
 		}
 		drawText(r, font, left-gutterW, y, lnText, lnCol)
 		drawStyledLine(
@@ -1518,42 +1542,50 @@ func bufferLanguageMode(path string, buf []rune) string {
 	}
 }
 
-func maybeAutoComplete(app *appState, typed string) {
-	if app == nil || app.ed == nil || app.noGopls || app.inputActive || app.open.Active || app.ed.Leap.Active {
-		return
+func tryManualCompletion(app *appState) bool {
+	if app == nil || app.ed == nil || app.inputActive || app.open.Active || app.ed.Leap.Active {
+		return false
 	}
 	if detectSyntax(app.currentPath, string(app.ed.Buf)) != syntaxGo {
-		return
-	}
-	if len([]rune(typed)) != 1 {
-		return
-	}
-	r := []rune(typed)[0]
-	if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
-		return
+		return false
 	}
 	prefixStart := identPrefixStart(app.ed.Buf, app.ed.Caret)
 	prefix := string(app.ed.Buf[prefixStart:app.ed.Caret])
-	if len(prefix) < 3 {
-		return
+	if len(prefix) < 1 {
+		return false
 	}
 	lines := editor.SplitLines(app.ed.Buf)
 	line := editor.CaretLineAt(lines, app.ed.Caret)
 	col := editor.CaretColAt(lines, app.ed.Caret)
 	if line < 0 || col < 0 {
-		return
+		return false
 	}
-	items, err := app.gopls.complete(app.currentPath, string(app.ed.Buf), line, col)
-	if err != nil {
-		app.noGopls = true
-		app.lastEvent = "Autocomplete disabled (gopls unavailable)"
-		return
+	items := []completionItem(nil)
+	if !app.noGopls {
+		got, err := app.gopls.complete(app.currentPath, string(app.ed.Buf), line, col)
+		if err != nil {
+			app.noGopls = true
+			app.lastEvent = "Autocomplete disabled (gopls unavailable)"
+		} else {
+			items = got
+		}
 	}
-	item, ok := extremelySureCompletion(prefix, items)
-	if !ok {
-		return
+	item, ok := extremelySureCompletion(prefix, items, 1)
+	if ok {
+		applyCompletionText(app, prefixStart, item.Insert)
+		return true
 	}
-	insert := []rune(item.Insert)
+
+	// Fallback: deterministic keyword completion when there's exactly one match.
+	if kw, ok := goKeywordFallback(prefix); ok {
+		applyCompletionText(app, prefixStart, kw)
+		return true
+	}
+	return false
+}
+
+func applyCompletionText(app *appState, prefixStart int, insertText string) {
+	insert := []rune(insertText)
 	next := make([]rune, 0, len(app.ed.Buf)-(app.ed.Caret-prefixStart)+len(insert))
 	next = append(next, app.ed.Buf[:prefixStart]...)
 	next = append(next, insert...)
@@ -1563,8 +1595,8 @@ func maybeAutoComplete(app *appState, typed string) {
 	app.markDirty()
 }
 
-func extremelySureCompletion(prefix string, items []completionItem) (completionItem, bool) {
-	if len(items) != 1 || len(prefix) < 3 {
+func extremelySureCompletion(prefix string, items []completionItem, minPrefix int) (completionItem, bool) {
+	if len(items) != 1 || len(prefix) < minPrefix {
 		return completionItem{}, false
 	}
 	item := items[0]
@@ -1576,16 +1608,54 @@ func extremelySureCompletion(prefix string, items []completionItem) (completionI
 		return completionItem{}, false
 	}
 	if !strings.HasPrefix(insert, prefix) {
+		// For snippet/punctuation inserts, fallback to label if label is a strict prefix match.
+		if strings.HasPrefix(item.Label, prefix) && isSimpleIdent(item.Label) {
+			item.Insert = item.Label
+			return item, true
+		}
 		return completionItem{}, false
 	}
-	for _, r := range insert {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
-			continue
+	if !isSimpleIdent(insert) {
+		if strings.HasPrefix(item.Label, prefix) && isSimpleIdent(item.Label) {
+			item.Insert = item.Label
+			return item, true
 		}
 		return completionItem{}, false
 	}
 	item.Insert = insert
 	return item, true
+}
+
+func isSimpleIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func goKeywordFallback(prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	match := ""
+	for kw := range goKeywordTokens {
+		if strings.HasPrefix(kw, prefix) {
+			if match != "" {
+				return "", false
+			}
+			match = kw
+		}
+	}
+	if match == "" {
+		return "", false
+	}
+	return match, true
 }
 
 func drawStyledLine(

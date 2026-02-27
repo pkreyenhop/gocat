@@ -39,9 +39,10 @@ go build -o gc .
 
 - **Activation:** Completion runs only in Go mode (`lang=go` in status line).
 - **Engine:** The editor starts `gopls` lazily and communicates over LSP.
-- **When it updates:** Typing identifier characters in a Go buffer triggers a confidence check.
+- **When it updates:** Pressing `Tab` in a Go buffer triggers a confidence check.
 - **Accept semantics:** When confidence is high, the identifier prefix directly before the caret is replaced automatically.
 - **Failure mode:** If `gopls` is unavailable or fails, completion is disabled for that session; the editor remains fully usable.
+- **Fallback mode:** If `gopls` is unavailable, pressing `Tab` still performs deterministic Go keyword completion when there is exactly one keyword match for the current prefix.
 - **Limitations (current):**
   - Go-only completion
   - No completion choices/popup UI; completion only fires on a single strong candidate
@@ -50,7 +51,7 @@ go build -o gc .
 
 ## Buffers & Files
 
-- **New / cycle buffers:** `Ctrl+B` creates `<untitled>`; `Tab` / `Shift+Tab` cycles.
+- **New / cycle buffers:** `Ctrl+B` creates `<untitled>`; `Ctrl+Tab` / `Ctrl+Shift+Tab` cycles.
 - **File picker:** `Ctrl+O` opens a picker buffer rooted at the current directory; entries start with `..` to go up. Leap to a line and press `Ctrl+L` to open; directories open in-place; files open in new buffers or switch if already loaded.
 - **Save current:** `Ctrl+W` saves the active buffer. If unnamed (`<untitled>`), the input line prompts “Save as:” — type a path and press Enter.
 - **Save dirty buffers:** `Ctrl+Shift+S` saves only buffers marked dirty.
@@ -69,10 +70,16 @@ go build -o gc .
   - C (`.c` / `.h`)
   - Miranda (`.m`, currently parsed via the Haskell Tree-sitter grammar backend)
 
+## Go Syntax Check
+
+- In Go mode, source is parsed with Go's parser (`parser.AllErrors`).
+- Any line with a parse error is marked with a red gutter indicator.
+- Syntax checking is disabled for non-Go buffers.
+
 ## Tips & Examples
 
 - **Jump around text:** Hold Right Cmd, type `foo`, release — caret jumps to `foo` ignoring case. Press `Ctrl+Right Cmd` to leap again to the next `foo`.
 - **Indent quickly:** Press space twice on a line to insert a tab at its start.
 - **Open by pattern:** `Ctrl+O`, type a few letters of the filename with Leap, `Ctrl+L` to open. Use `..` to go up a directory.
 - **Save unnamed buffer:** `Ctrl+W`, type `notes/todo.txt` in the input line, Enter — file is created and saved, buffer is renamed.
-- **Multiple files:** `./gc file1.txt dir/file2.txt` opens two buffers; `Tab`/`Shift+Tab` cycles.
+- **Multiple files:** `./gc file1.txt dir/file2.txt` opens two buffers; `Ctrl+Tab`/`Ctrl+Shift+Tab` cycles.

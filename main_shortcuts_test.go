@@ -27,7 +27,7 @@ func ensureSDL(t *testing.T) {
 	})
 }
 
-func TestShortcutCtrlBCreatesBufferAndTabCycles(t *testing.T) {
+func TestShortcutCtrlBCreatesBufferAndCtrlTabCycles(t *testing.T) {
 	ensureSDL(t)
 	app := appState{}
 	app.initBuffers(editor.NewEditor("one"))
@@ -45,7 +45,41 @@ func TestShortcutCtrlBCreatesBufferAndTabCycles(t *testing.T) {
 		t.Fatalf("Ctrl+B should add buffer, got %d", len(app.buffers))
 	}
 
-	// Tab cycles forward
+	// Ctrl+Tab cycles forward
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_TAB},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+Tab")
+	}
+	if app.bufIdx != 0 {
+		t.Fatalf("Ctrl+Tab should cycle to next buffer modulo N; got idx=%d", app.bufIdx)
+	}
+
+	// Ctrl+Shift+Tab cycles backward
+	sdl.SetModState(sdl.KMOD_CTRL | sdl.KMOD_SHIFT)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_TAB, Mod: sdl.KMOD_LCTRL | sdl.KMOD_LSHIFT},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+Shift+Tab")
+	}
+	if app.bufIdx != 1 {
+		t.Fatalf("Ctrl+Shift+Tab should cycle backward; got idx=%d", app.bufIdx)
+	}
+}
+
+func TestShortcutTabCompletesGoKeywordFallback(t *testing.T) {
+	ensureSDL(t)
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("packa"))
+	app.currentPath = "p1.go"
+	app.buffers[0].path = "p1.go"
+	app.ed.Caret = len(app.ed.Buf)
+
 	sdl.SetModState(0)
 	if !handleEvent(&app, &sdl.KeyboardEvent{
 		Type:   sdl.KEYDOWN,
@@ -54,21 +88,29 @@ func TestShortcutCtrlBCreatesBufferAndTabCycles(t *testing.T) {
 	}) {
 		t.Fatal("unexpected quit on Tab")
 	}
-	if app.bufIdx != 0 {
-		t.Fatalf("Tab should cycle to next buffer modulo N; got idx=%d", app.bufIdx)
+	if got := string(app.ed.Buf); got != "package" {
+		t.Fatalf("Tab completion should produce package, got %q", got)
 	}
+}
 
-	// Shift+Tab cycles backward
-	sdl.SetModState(sdl.KMOD_SHIFT)
+func TestShortcutTabDoesNotCompleteOutsideGoMode(t *testing.T) {
+	ensureSDL(t)
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("packa"))
+	app.currentPath = "note.txt"
+	app.buffers[0].path = "note.txt"
+	app.ed.Caret = len(app.ed.Buf)
+
+	sdl.SetModState(0)
 	if !handleEvent(&app, &sdl.KeyboardEvent{
 		Type:   sdl.KEYDOWN,
 		Repeat: 0,
-		Keysym: sdl.Keysym{Sym: sdl.K_TAB, Mod: sdl.KMOD_LSHIFT},
+		Keysym: sdl.Keysym{Sym: sdl.K_TAB},
 	}) {
-		t.Fatal("unexpected quit on Shift+Tab")
+		t.Fatal("unexpected quit on Tab")
 	}
-	if app.bufIdx != 1 {
-		t.Fatalf("Shift+Tab should cycle backward; got idx=%d", app.bufIdx)
+	if got := string(app.ed.Buf); got != "packa" {
+		t.Fatalf("Tab should not complete outside Go mode, got %q", got)
 	}
 }
 

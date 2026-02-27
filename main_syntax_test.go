@@ -118,7 +118,7 @@ func TestParseCompletionItems(t *testing.T) {
 func TestExtremelySureCompletion(t *testing.T) {
 	item, ok := extremelySureCompletion("Prin", []completionItem{
 		{Label: "Println", Insert: "Println"},
-	})
+	}, 3)
 	if !ok {
 		t.Fatalf("expected high-confidence completion")
 	}
@@ -126,13 +126,50 @@ func TestExtremelySureCompletion(t *testing.T) {
 		t.Fatalf("insert=%q, want %q", item.Insert, "Println")
 	}
 
-	if _, ok := extremelySureCompletion("Pr", []completionItem{{Label: "Println", Insert: "Println"}}); ok {
+	if _, ok := extremelySureCompletion("Pr", []completionItem{{Label: "Println", Insert: "Println"}}, 3); ok {
 		t.Fatalf("expected low confidence for short prefix")
 	}
-	if _, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println"}, {Label: "Printf", Insert: "Printf"}}); ok {
+	if _, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println"}, {Label: "Printf", Insert: "Printf"}}, 3); ok {
 		t.Fatalf("expected low confidence for multiple candidates")
 	}
-	if _, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println()"}}); ok {
-		t.Fatalf("expected low confidence for punctuation insert text")
+	item3, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println()"}}, 3)
+	if !ok || item3.Insert != "Println" {
+		t.Fatalf("expected label fallback for punctuation insert text, got ok=%v insert=%q", ok, item3.Insert)
+	}
+	item2, ok := extremelySureCompletion("pack", []completionItem{{Label: "package", Insert: "package ${1:name}"}}, 1)
+	if !ok || item2.Insert != "package" {
+		t.Fatalf("expected label fallback for snippet completion, got ok=%v insert=%q", ok, item2.Insert)
+	}
+}
+
+func TestGoKeywordFallback(t *testing.T) {
+	if got, ok := goKeywordFallback("pack"); !ok || got != "package" {
+		t.Fatalf("goKeywordFallback(pack)=%q ok=%v, want package true", got, ok)
+	}
+	if _, ok := goKeywordFallback("r"); ok {
+		t.Fatalf("goKeywordFallback(r) should be ambiguous")
+	}
+}
+
+func TestGoSyntaxCheckerLineErrors(t *testing.T) {
+	c := newGoSyntaxChecker()
+
+	noErr := c.lineErrorsFor("ok.go", []rune("package main\nfunc main() {}\n"))
+	if len(noErr) != 0 {
+		t.Fatalf("expected no syntax errors, got %v", noErr)
+	}
+
+	src := "package main\nfunc main() {\n"
+	withErr := c.lineErrorsFor("bad.go", []rune(src))
+	if len(withErr) == 0 {
+		t.Fatalf("expected syntax error lines for incomplete Go source")
+	}
+	if _, ok := withErr[1]; !ok {
+		t.Fatalf("expected line 2 marker, got %v", withErr)
+	}
+
+	nonGo := c.lineErrorsFor("notes.md", []rune("# h1\n"))
+	if len(nonGo) != 0 {
+		t.Fatalf("expected no syntax checking for non-Go buffers")
 	}
 }

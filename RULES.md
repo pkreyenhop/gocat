@@ -9,7 +9,7 @@
   - ESC exits Leap, clears selection if active; during Leap, Cmd+Q is ignored.
 
 - **Buffers & files**
-  - `Ctrl+B` creates a new `<untitled>` buffer; `Tab` / `Shift+Tab` cycles buffers.
+  - `Ctrl+B` creates a new `<untitled>` buffer; `Ctrl+Tab` / `Ctrl+Shift+Tab` cycles buffers.
   - `Ctrl+O` opens a file-picker rooted at the current dir (skips dot/vendor); `..` goes up; directories end with `/` and open in-place; `Ctrl+L` loads the selected path (new buffer or switch if already loaded).
   - Startup loads multiple filenames (skips directories). Missing filenames open empty buffers and are created on first save.
   - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers.
@@ -23,11 +23,13 @@
   - `Ctrl+K` kills to end of line; `Ctrl+U` undo (single-step).
   - Comment toggle: `Ctrl+/` toggles `//` on selection or current line.
   - Clipboard: `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
-  - Go autocompletion: in Go mode, typing identifier characters triggers `gopls`; completion auto-inserts only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
+  - Go autocompletion: in Go mode, `Tab` triggers `gopls`; completion auto-inserts only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
+  - If `gopls` is unavailable, `Tab` falls back to deterministic Go keyword completion when the current prefix has exactly one keyword match.
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
   - Go buffers (`.go` path or first non-empty line starting with `package `) use Tree-sitter highlighting for comments, strings, numbers, keywords, type identifiers, and function identifiers.
+  - Go buffers run syntax checking via the Go parser; lines with parse errors show a red gutter marker.
   - Markdown buffers (`.md`/`.markdown`) use Tree-sitter highlighting for headings, fenced/indented code blocks, links, list/quote/table punctuation, and thematic breaks.
   - C buffers (`.c`/`.h`) use Tree-sitter highlighting for comments, strings/chars, numeric literals, C keywords, preprocessor directives, and type identifiers.
   - Miranda buffers (`.m`) use Tree-sitter highlighting (currently via the Haskell grammar backend) for comments, strings/chars, numeric literals, declaration keywords, and type nodes.
