@@ -114,6 +114,92 @@ func TestShortcutTabDoesNotCompleteOutsideGoMode(t *testing.T) {
 	}
 }
 
+func TestShortcutCtrlIShowsGoSymbolInfo(t *testing.T) {
+	ensureSDL(t)
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = "p1.go"
+	app.buffers[0].path = "p1.go"
+	app.ed.Caret = 2
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_i},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+I")
+	}
+	if !strings.Contains(app.symbolInfoPopup, "Go keyword package") {
+		t.Fatalf("Ctrl+I should show keyword info popup, got %q", app.symbolInfoPopup)
+	}
+
+	sdl.SetModState(0)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_ESCAPE},
+	}) {
+		t.Fatal("unexpected quit on Esc")
+	}
+	if app.symbolInfoPopup != "" {
+		t.Fatalf("Esc should close symbol popup, got %q", app.symbolInfoPopup)
+	}
+}
+
+func TestSymbolInfoPopupScrollKeys(t *testing.T) {
+	ensureSDL(t)
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = "p1.go"
+	app.symbolInfoPopup = strings.Repeat("word ", 300)
+
+	sdl.SetModState(0)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_DOWN},
+	}) {
+		t.Fatal("unexpected quit on Down")
+	}
+	if app.symbolInfoScroll == 0 {
+		t.Fatal("Down should increase popup scroll")
+	}
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_PAGEDOWN},
+	}) {
+		t.Fatal("unexpected quit on PageDown")
+	}
+	if app.symbolInfoScroll < 2 {
+		t.Fatalf("PageDown should increase popup scroll further; got %d", app.symbolInfoScroll)
+	}
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_HOME},
+	}) {
+		t.Fatal("unexpected quit on Home")
+	}
+	if app.symbolInfoScroll != 0 {
+		t.Fatalf("Home should reset popup scroll; got %d", app.symbolInfoScroll)
+	}
+
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_END},
+	}) {
+		t.Fatal("unexpected quit on End")
+	}
+	if app.symbolInfoScroll == 0 {
+		t.Fatalf("End should set popup scroll high; got %d", app.symbolInfoScroll)
+	}
+}
+
 func TestShortcutCtrlQQuitsImmediateWithShift(t *testing.T) {
 	ensureSDL(t)
 	app := appState{}

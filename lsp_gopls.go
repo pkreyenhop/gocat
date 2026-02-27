@@ -136,6 +136,31 @@ func (c *goplsClient) complete(path string, content string, line int, col int) (
 	return parseCompletionItems(raw), nil
 }
 
+func (c *goplsClient) hover(path string, content string, line int, col int) (string, error) {
+	if err := c.ensureStarted(); err != nil {
+		return "", err
+	}
+	if err := c.ensureInitialized(); err != nil {
+		return "", err
+	}
+	uri := completionURI(path)
+	if err := c.syncDocument(uri, content); err != nil {
+		return "", err
+	}
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position": map[string]any{
+			"line":      line,
+			"character": col,
+		},
+	}
+	raw, err := c.request("textDocument/hover", params)
+	if err != nil {
+		return "", err
+	}
+	return parseHoverText(raw), nil
+}
+
 func (c *goplsClient) syncDocument(uri, content string) error {
 	ver := c.opened[uri]
 	if ver == 0 {
@@ -322,6 +347,50 @@ func mapCompletionItems(items []lspCompletionItem) []completionItem {
 		}
 	}
 	return out
+}
+
+func parseHoverText(raw json.RawMessage) string {
+	var payload struct {
+		Contents json.RawMessage `json:"contents"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || len(payload.Contents) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(payload.Contents, &s); err == nil {
+		return s
+	}
+	var markup struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(payload.Contents, &markup); err == nil && markup.Value != "" {
+		return markup.Value
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(payload.Contents, &arr); err == nil {
+		var out strings.Builder
+		for _, it := range arr {
+			var ss string
+			if err := json.Unmarshal(it, &ss); err == nil {
+				if out.Len() > 0 {
+					out.WriteByte('\n')
+				}
+				out.WriteString(ss)
+				continue
+			}
+			var m struct {
+				Value string `json:"value"`
+			}
+			if err := json.Unmarshal(it, &m); err == nil && m.Value != "" {
+				if out.Len() > 0 {
+					out.WriteByte('\n')
+				}
+				out.WriteString(m.Value)
+			}
+		}
+		return out.String()
+	}
+	return ""
 }
 
 func stripSnippet(s string) string {

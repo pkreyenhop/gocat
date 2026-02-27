@@ -15,6 +15,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
 - **Rendering cues**: Purple palette; status line shows mode/query/buffer, `lang=<mode>`, and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined. Go buffers (`.go` or `package ...`), Markdown buffers (`.md`/`.markdown`), C buffers (`.c`/`.h`), and Miranda buffers (`.m`) use Tree-sitter token highlighting (Miranda currently uses the Haskell Tree-sitter grammar backend).
 - **Go syntax markers**: In Go mode, parse errors are checked with the Go parser, and lines with syntax errors get a red marker in the gutter.
+- **Go symbol info**: In Go mode, press `Ctrl+I` to open a symbol-info popup for the symbol under cursor (local keyword/builtin docs with `gopls` hover fallback). Press `Esc` to close; use `Up/Down` (or `PageUp/PageDown`, `Home/End`) to scroll when needed.
 
 ## Shortcut Quick Reference
 
@@ -32,10 +33,11 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 | Buffer start / end | Ctrl+Shift+A / Ctrl+Shift+E |
 | Kill to EOL | Ctrl+K |
 | Copy / Cut / Paste | Ctrl+C / Ctrl+X / Ctrl+V |
+| Symbol info under cursor (Go) | Ctrl+I |
 | Autocomplete (Go mode) | Tab |
 | Navigation | Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select) |
 | Delete / line delete | Delete word under/left of caret / Shift+Delete line |
-| Escape | Clear selection; close picker or clean buffer |
+| Escape | Clear selection; close symbol popup; close picker or clean buffer |
 | Help buffer | Ctrl+Shift+/ (Ctrl+?) |
 
 ## Running

@@ -44,32 +44,34 @@ type bufferSlot struct {
 }
 
 type appState struct {
-	ed          *editor.Editor // active buffer editor (mirrors buffers[bufIdx].ed)
-	lastEvent   string
-	lastMods    sdl.Keymod
-	blinkAt     time.Time
-	lastSpaceAt time.Time
-	lastSpaceLn int
-	inputActive bool
-	inputPrompt string
-	inputValue  string
-	inputKind   string
-	win         *sdl.Window
-	lastW       int
-	lastH       int
-	lastX       int32
-	lastY       int32
-	openRoot    string
-	open        openPrompt
-	buffers     []bufferSlot
-	bufIdx      int
-	currentPath string // mirrors active buffer path for status messages
-	scrollLine  int
-	showHelp    bool
-	syntaxHL    *syntaxHighlighter
-	syntaxCheck *goSyntaxChecker
-	gopls       *goplsClient
-	noGopls     bool
+	ed               *editor.Editor // active buffer editor (mirrors buffers[bufIdx].ed)
+	lastEvent        string
+	lastMods         sdl.Keymod
+	blinkAt          time.Time
+	lastSpaceAt      time.Time
+	lastSpaceLn      int
+	inputActive      bool
+	inputPrompt      string
+	inputValue       string
+	inputKind        string
+	win              *sdl.Window
+	lastW            int
+	lastH            int
+	lastX            int32
+	lastY            int32
+	openRoot         string
+	open             openPrompt
+	buffers          []bufferSlot
+	bufIdx           int
+	currentPath      string // mirrors active buffer path for status messages
+	scrollLine       int
+	showHelp         bool
+	symbolInfoPopup  string
+	symbolInfoScroll int
+	syntaxHL         *syntaxHighlighter
+	syntaxCheck      *goSyntaxChecker
+	gopls            *goplsClient
+	noGopls          bool
 }
 
 type helpEntry struct {
@@ -91,9 +93,10 @@ var helpEntries = []helpEntry{
 	{"Buffer start / end", "Ctrl+Shift+A / Ctrl+Shift+E"},
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
+	{"Symbol info under cursor (Go)", "Ctrl+I"},
 	{"Autocomplete (Go mode)", "Tab"},
 	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
-	{"Escape", "Clear selection; close picker or clean buffer"},
+	{"Escape", "Clear selection; close symbol popup; close picker or clean buffer"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
 }
 
@@ -305,8 +308,36 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			fmt.Println(app.lastEvent)
 		}
 
+		if e.Type == sdl.KEYDOWN && app.symbolInfoPopup != "" {
+			switch sym {
+			case sdl.K_UP:
+				app.symbolInfoScroll = max(0, app.symbolInfoScroll-1)
+				return true
+			case sdl.K_DOWN:
+				app.symbolInfoScroll++
+				return true
+			case sdl.K_PAGEUP:
+				app.symbolInfoScroll = max(0, app.symbolInfoScroll-6)
+				return true
+			case sdl.K_PAGEDOWN:
+				app.symbolInfoScroll += 6
+				return true
+			case sdl.K_HOME:
+				app.symbolInfoScroll = 0
+				return true
+			case sdl.K_END:
+				app.symbolInfoScroll = 1 << 20
+				return true
+			}
+		}
+
 		// Escape: clear selection, close picker, or close clean buffer; no global quit
 		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
+			if app.symbolInfoPopup != "" {
+				app.symbolInfoPopup = ""
+				app.symbolInfoScroll = 0
+				return true
+			}
 			if ed.Sel.Active {
 				ed.Sel.Active = false
 				ed.Leap.Selecting = false
@@ -405,6 +436,10 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 					ed.Undo()
 					app.lastEvent = "Undo"
 					app.markDirty()
+					return true
+				case sdl.K_i:
+					app.symbolInfoPopup = showSymbolInfo(app)
+					app.symbolInfoScroll = 0
 					return true
 				case sdl.K_SLASH:
 					if (mods & sdl.KMOD_SHIFT) != 0 {
@@ -1447,6 +1482,8 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 		}
 	}
 
+	drawSymbolInfoPopup(r, font, app, w, h, infoBarH)
+
 	// Status bar above input line (inverted colors)
 	barY := h - infoBarH*2
 	barBg := sdl.Color{R: 35, G: 18, B: 43, A: 255}    // darker info bar
@@ -1525,6 +1562,89 @@ func drawText(r *sdl.Renderer, font *ttf.Font, x, y int, text string, col sdl.Co
 
 	dst := sdl.Rect{X: int32(x), Y: int32(y), W: surf.W, H: surf.H}
 	_ = r.Copy(tex, nil, &dst)
+}
+
+func drawSymbolInfoPopup(r *sdl.Renderer, font *ttf.Font, app *appState, winW, winH, infoBarH int) {
+	if app == nil || strings.TrimSpace(app.symbolInfoPopup) == "" {
+		return
+	}
+	text := app.symbolInfoPopup
+	const pad = 12
+	maxW := max(320, winW-80)
+	lines := wrapPopupText(text, 70)
+	if len(lines) == 0 {
+		lines = []string{text}
+	}
+	lineH := font.Height() + 4
+	maxH := winH - infoBarH*2 - 40
+	boxH := min(maxH, pad*2+lineH*14)
+	minH := pad*2 + lineH*3
+	if boxH < minH {
+		boxH = minH
+	}
+	boxW := maxW
+	x := (winW - boxW) / 2
+	y := max(20, (winH-infoBarH*2-boxH)/2)
+
+	bg := sdl.Color{R: 28, G: 14, B: 35, A: 245}
+	border := sdl.Color{R: 160, G: 126, B: 214, A: 255}
+	fg := sdl.Color{R: 228, G: 214, B: 255, A: 255}
+	dim := sdl.Color{R: 175, G: 154, B: 214, A: 255}
+
+	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
+	_ = r.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(boxW), H: int32(boxH)})
+	r.SetDrawColor(border.R, border.G, border.B, border.A)
+	_ = r.DrawRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(boxW), H: int32(boxH)})
+
+	drawText(r, font, x+pad, y+pad, "Symbol Info", fg)
+
+	contentTop := y + pad + lineH
+	footerY := y + boxH - pad - lineH
+	contentHeight := max(lineH, footerY-contentTop)
+	visible := max(1, contentHeight/lineH)
+	maxScroll := max(0, len(lines)-visible)
+	app.symbolInfoScroll = clamp(app.symbolInfoScroll, 0, maxScroll)
+
+	start := app.symbolInfoScroll
+	end := min(len(lines), start+visible)
+	for i := start; i < end; i++ {
+		yy := contentTop + (i-start)*lineH
+		if yy+lineH > footerY {
+			break
+		}
+		drawText(r, font, x+pad, yy, lines[i], fg)
+	}
+	hint := "Esc close | Up/Down scroll"
+	if maxScroll > 0 {
+		hint = fmt.Sprintf("Esc close | Up/Down scroll (%d-%d/%d)", start+1, end, len(lines))
+	}
+	drawText(r, font, x+pad, footerY, hint, dim)
+}
+
+func wrapPopupText(text string, maxChars int) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if maxChars <= 10 {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{text}
+	}
+	out := make([]string, 0, 4)
+	cur := words[0]
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		if len(cur)+1+len(w) <= maxChars {
+			cur += " " + w
+			continue
+		}
+		out = append(out, cur)
+		cur = w
+	}
+	out = append(out, cur)
+	return out
 }
 
 func bufferLanguageMode(path string, buf []rune) string {

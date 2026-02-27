@@ -25,6 +25,7 @@
   - Clipboard: `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
   - Go autocompletion: in Go mode, `Tab` triggers `gopls`; completion auto-inserts only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
   - If `gopls` is unavailable, `Tab` falls back to deterministic Go keyword completion when the current prefix has exactly one keyword match.
+  - In Go mode, `Ctrl+I` opens a symbol-info popup for the symbol under cursor (keyword/builtin docs with `gopls` hover fallback); `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long popup content.
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"gc/editor"
@@ -171,5 +172,77 @@ func TestGoSyntaxCheckerLineErrors(t *testing.T) {
 	nonGo := c.lineErrorsFor("notes.md", []rune("# h1\n"))
 	if len(nonGo) != 0 {
 		t.Fatalf("expected no syntax checking for non-Go buffers")
+	}
+}
+
+func TestSymbolUnderCaret(t *testing.T) {
+	buf := []rune("package main\nfmt.Println(x)\n")
+	if got := symbolUnderCaret(buf, 2); got != "package" {
+		t.Fatalf("symbolUnderCaret keyword=%q, want package", got)
+	}
+	pos := strings.Index(string(buf), "Println") + 2
+	if got := symbolUnderCaret(buf, pos); got != "Println" {
+		t.Fatalf("symbolUnderCaret function=%q, want Println", got)
+	}
+}
+
+func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = "a.go"
+	app.ed.Caret = 2
+	if got := showSymbolInfo(&app); !strings.Contains(got, "Go keyword package") {
+		t.Fatalf("keyword info mismatch: %q", got)
+	}
+
+	app2 := appState{noGopls: true}
+	app2.initBuffers(editor.NewEditor("x := len(y)\n"))
+	app2.currentPath = "b.go"
+	app2.ed.Caret = strings.Index(string(app2.ed.Buf), "len") + 1
+	if got := showSymbolInfo(&app2); !strings.Contains(got, "Go builtin len") {
+		t.Fatalf("builtin info mismatch: %q", got)
+	}
+}
+
+func TestShowSymbolInfoNonGoAndNoSymbol(t *testing.T) {
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("plain text"))
+	app.currentPath = "note.txt"
+	app.ed.Caret = 2
+	if got := showSymbolInfo(&app); got != "Symbol info: Go mode only" {
+		t.Fatalf("expected non-go message, got %q", got)
+	}
+
+	app2 := appState{noGopls: true}
+	app2.initBuffers(editor.NewEditor("package main\n"))
+	app2.currentPath = "a.go"
+	app2.ed.Caret = len(app2.ed.Buf)
+	if got := showSymbolInfo(&app2); got == "" {
+		t.Fatalf("expected non-empty message")
+	}
+}
+
+func TestWrapPopupTextAndSingleLine(t *testing.T) {
+	lines := wrapPopupText("one two three four five six seven", 11)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped lines, got %v", lines)
+	}
+	if got := singleLine("hello\nworld"); got != "hello world" {
+		t.Fatalf("singleLine newline flatten failed: %q", got)
+	}
+}
+
+func TestParseHoverText(t *testing.T) {
+	raw1 := json.RawMessage(`{"contents":"abc"}`)
+	if got := parseHoverText(raw1); got != "abc" {
+		t.Fatalf("parseHoverText string=%q", got)
+	}
+	raw2 := json.RawMessage(`{"contents":{"kind":"markdown","value":"**x**"}}`)
+	if got := parseHoverText(raw2); got != "**x**" {
+		t.Fatalf("parseHoverText markup=%q", got)
+	}
+	raw3 := json.RawMessage(`{"contents":[{"kind":"markdown","value":"a"},"b"]}`)
+	if got := parseHoverText(raw3); got != "a\nb" {
+		t.Fatalf("parseHoverText array=%q", got)
 	}
 }

@@ -34,6 +34,7 @@ go build -o gc .
 - **Comment toggle:** `Ctrl+/` toggles `//` on selection or current line.
 - **Clipboard:** `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
 - **Go autocompletion:** In Go buffers, completion is non-interruptive. The editor auto-completes only when there is a single high-confidence `gopls` result (prefix length at least 3 and identifier-safe insert text); no suggestion popup is shown.
+- **Go symbol info:** `Ctrl+I` opens a popup with information about the symbol under cursor (keywords, builtins, or hover text when available). `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long content.
 
 ## Go Completion Details
 
