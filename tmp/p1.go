@@ -1,5 +1,7 @@
-package p1
+package main
 
-func add1() {
-	return 1
+import "fmt"
+
+func main() {
+	fmt.Println("hi")
 }

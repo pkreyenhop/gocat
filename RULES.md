@@ -14,6 +14,7 @@
   - Startup loads multiple filenames (skips directories). Missing filenames open empty buffers and are created on first save.
   - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers.
   - `Ctrl+F` saves current file, runs `go fmt` and `go fix`, then reloads the file into the active buffer.
+  - `Ctrl+R` invokes `go run .` in the active file directory and opens a new run-output buffer with command header, streamed stdout/stderr (`[stderr]` prefix), and trailing `[exit]` status.
   - `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits. ESC closes clean buffer or picker; dirty buffers stay open and warn.
 
 - **Editing & movement**

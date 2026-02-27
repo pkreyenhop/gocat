@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -244,5 +247,104 @@ func TestParseHoverText(t *testing.T) {
 	raw3 := json.RawMessage(`{"contents":[{"kind":"markdown","value":"a"},"b"]}`)
 	if got := parseHoverText(raw3); got != "a\nb" {
 		t.Fatalf("parseHoverText array=%q", got)
+	}
+}
+
+func TestParseLineFromErr(t *testing.T) {
+	if ln, ok := parseLineFromErr("bad.go:4:2: expected ';'"); !ok || ln != 3 {
+		t.Fatalf("parseLineFromErr line parse mismatch: ln=%d ok=%v", ln, ok)
+	}
+	if _, ok := parseLineFromErr("nonsense"); ok {
+		t.Fatalf("parseLineFromErr should reject malformed messages")
+	}
+	if _, ok := parseLineFromErr("bad.go:x:2: expected"); ok {
+		t.Fatalf("parseLineFromErr should reject non-numeric line numbers")
+	}
+}
+
+func TestAppendRunOutput(t *testing.T) {
+	ed := editor.NewEditor("abc")
+	ed.Caret = 0
+	appendRunOutput(ed, "xyz")
+	if got := string(ed.Buf); got != "abcxyz" {
+		t.Fatalf("appendRunOutput buf=%q, want %q", got, "abcxyz")
+	}
+	if ed.Caret != len(ed.Buf) {
+		t.Fatalf("appendRunOutput caret=%d, want %d", ed.Caret, len(ed.Buf))
+	}
+	appendRunOutput(nil, "noop")
+	appendRunOutput(ed, "")
+}
+
+func TestRunCurrentPackageNilApp(t *testing.T) {
+	if err := runCurrentPackage(nil); err == nil {
+		t.Fatalf("runCurrentPackage(nil) should fail")
+	}
+}
+
+func TestRunCurrentPackageOpensBufferAndStreamsOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.go")
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = path
+	app.buffers[0].path = path
+
+	oldRun := startGoRun
+	defer func() { startGoRun = oldRun }()
+	startGoRun = func(runDir string, onOut func(string), onDone func(error)) error {
+		if runDir != dir {
+			t.Fatalf("runDir=%q, want %q", runDir, dir)
+		}
+		onOut("hello\n")
+		onDone(errors.New("boom"))
+		return nil
+	}
+
+	if err := runCurrentPackage(&app); err != nil {
+		t.Fatalf("runCurrentPackage err: %v", err)
+	}
+	if len(app.buffers) != 2 {
+		t.Fatalf("expected run buffer to be added, got %d buffers", len(app.buffers))
+	}
+	got := string(app.ed.Buf)
+	if !strings.Contains(got, "$ (cd "+dir+" && go run .)") {
+		t.Fatalf("run buffer missing command header: %q", got)
+	}
+	if !strings.Contains(got, "hello\n") {
+		t.Fatalf("run buffer missing streamed output: %q", got)
+	}
+	if !strings.Contains(got, "[exit] boom") {
+		t.Fatalf("run buffer missing error exit footer: %q", got)
+	}
+}
+
+func TestRunCurrentPackageUsesCwdFallback(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = ""
+	app.openRoot = ""
+
+	oldRun := startGoRun
+	defer func() { startGoRun = oldRun }()
+	startGoRun = func(runDir string, onOut func(string), onDone func(error)) error {
+		if runDir != cwd {
+			t.Fatalf("runDir=%q, want cwd %q", runDir, cwd)
+		}
+		if onDone != nil {
+			onDone(nil)
+		}
+		return nil
+	}
+
+	if err := runCurrentPackage(&app); err != nil {
+		t.Fatalf("runCurrentPackage err: %v", err)
+	}
+	if !strings.Contains(string(app.ed.Buf), "[exit] ok") {
+		t.Fatalf("run buffer should include ok footer, got %q", string(app.ed.Buf))
 	}
 }

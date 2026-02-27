@@ -6,8 +6,10 @@ package main
 import "C"
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +90,7 @@ var helpEntries = []helpEntry{
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
 	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
 	{"Save + fmt/fix + reload", "Ctrl+F"},
+	{"Run package (go run .)", "Ctrl+R"},
 	{"Close buffer / quit", "Ctrl+Q / Ctrl+Shift+Q"},
 	{"Undo", "Ctrl+U"},
 	{"Comment / uncomment", "Ctrl+/ (selection or current line)"},
@@ -419,6 +422,13 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 						app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
 					} else {
 						app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
+					}
+					return true
+				case sdl.K_r:
+					if err := runCurrentPackage(app); err != nil {
+						app.lastEvent = fmt.Sprintf("RUN ERR: %v", err)
+					} else {
+						app.lastEvent = "Running: go run ."
 					}
 					return true
 				case sdl.K_a:
@@ -850,6 +860,7 @@ func saveAll(app *appState) error {
 }
 
 var runFmtFix = goFmtAndFix
+var startGoRun = startGoRunProcess
 
 func formatFixReloadCurrent(app *appState) error {
 	if app == nil || app.ed == nil || len(app.buffers) == 0 {
@@ -870,6 +881,91 @@ func formatFixReloadCurrent(app *appState) error {
 		return reloadErr
 	}
 	return opErr
+}
+
+func runCurrentPackage(app *appState) error {
+	if app == nil {
+		return fmt.Errorf("no app state")
+	}
+	dir := app.openRoot
+	if app.currentPath != "" {
+		dir = filepath.Dir(app.currentPath)
+	}
+	if strings.TrimSpace(dir) == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		dir = cwd
+	}
+	title := fmt.Sprintf("[run] %s", filepath.Base(dir))
+	app.addBuffer()
+	app.buffers[app.bufIdx].path = title
+	app.buffers[app.bufIdx].dirty = false
+	app.currentPath = title
+	runEd := app.ed
+	runEd.Buf = []rune(fmt.Sprintf("$ (cd %s && go run .)\n\n", dir))
+	runEd.Caret = len(runEd.Buf)
+	runEd.Sel = editor.Sel{}
+
+	appendOut := func(s string) {
+		appendRunOutput(runEd, s)
+	}
+	onDone := func(err error) {
+		if err != nil {
+			appendOut(fmt.Sprintf("\n[exit] %v\n", err))
+			return
+		}
+		appendOut("\n[exit] ok\n")
+	}
+	return startGoRun(dir, appendOut, onDone)
+}
+
+func startGoRunProcess(dir string, onOut func(string), onDone func(error)) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("no run directory")
+	}
+	cmd := exec.Command("go", "run", ".")
+	cmd.Dir = dir
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		drain := func(rd io.Reader, prefix string) {
+			sc := bufio.NewScanner(rd)
+			for sc.Scan() {
+				if onOut != nil {
+					onOut(prefix + sc.Text() + "\n")
+				}
+			}
+		}
+		done := make(chan struct{}, 2)
+		go func() { drain(stdout, ""); done <- struct{}{} }()
+		go func() { drain(stderr, "[stderr] "); done <- struct{}{} }()
+		<-done
+		<-done
+		if onDone != nil {
+			onDone(cmd.Wait())
+		}
+	}()
+	return nil
+}
+
+func appendRunOutput(ed *editor.Editor, s string) {
+	if ed == nil || s == "" {
+		return
+	}
+	ed.Buf = append(ed.Buf, []rune(s)...)
+	ed.Caret = len(ed.Buf)
 }
 
 func goFmtAndFix(path string) error {

@@ -226,6 +226,83 @@ func TestCtrlFReloadsEvenIfFmtFixFails(t *testing.T) {
 	}
 }
 
+func TestShortcutCtrlRInvokesGoRun(t *testing.T) {
+	ensureSDL(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\nfunc main() {}\n"))
+	app.currentPath = path
+	app.buffers[0].path = path
+
+	var gotDir string
+	oldRun := startGoRun
+	defer func() { startGoRun = oldRun }()
+	startGoRun = func(runDir string, onOut func(string), onDone func(error)) error {
+		gotDir = runDir
+		if onOut != nil {
+			onOut("hello from run\n")
+		}
+		if onDone != nil {
+			onDone(nil)
+		}
+		return nil
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_r},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+R")
+	}
+	if gotDir != dir {
+		t.Fatalf("Ctrl+R run dir=%q, want %q", gotDir, dir)
+	}
+	if !strings.Contains(app.lastEvent, "Running: go run .") {
+		t.Fatalf("expected running status, got %q", app.lastEvent)
+	}
+	if len(app.buffers) < 2 {
+		t.Fatalf("Ctrl+R should open output buffer")
+	}
+	if !strings.Contains(string(app.ed.Buf), "hello from run") {
+		t.Fatalf("expected run output in buffer, got %q", string(app.ed.Buf))
+	}
+}
+
+func TestShortcutCtrlRUsesOpenRootWhenNoPath(t *testing.T) {
+	ensureSDL(t)
+	dir := t.TempDir()
+	app := appState{openRoot: dir}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = ""
+	app.buffers[0].path = ""
+
+	var gotDir string
+	oldRun := startGoRun
+	defer func() { startGoRun = oldRun }()
+	startGoRun = func(runDir string, onOut func(string), onDone func(error)) error {
+		gotDir = runDir
+		if onDone != nil {
+			onDone(nil)
+		}
+		return nil
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_r},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+R")
+	}
+	if gotDir != dir {
+		t.Fatalf("Ctrl+R fallback run dir=%q, want %q", gotDir, dir)
+	}
+}
+
 func TestSymbolInfoPopupScrollKeys(t *testing.T) {
 	ensureSDL(t)
 	app := appState{}

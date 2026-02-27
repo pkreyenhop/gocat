@@ -10,6 +10,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 - **Dual-Cmd selection**: While leaping with one Command key held, press the other Command key to start a selection anchored at the original caret; further Leap moves extend the selection. Ctrl+Cmd (Left/Right) triggers Leap Again without entering quasimode.
 - **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Ctrl+Tab`/`Ctrl+Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
 - **Save + format/fix/reload**: `Ctrl+F` saves the current file, runs `go fmt` and `go fix` for the file’s package directory, then reloads the file into the active buffer.
+- **Run package**: `Ctrl+R` invokes `go run .` in the active file’s directory and opens a new run-output buffer. The buffer starts with the command line, streams stdout/stderr (`[stderr]`-prefixed), and appends an `[exit]` status footer.
 - **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start. Passing a missing filename opens an empty buffer with that name; the file is created on first save.
 - **Go autocompletion**: In Go buffers, completion runs in a non-interruptive mode. The editor auto-completes only when it is highly confident (identifier prefix length at least 3, exactly one `gopls` candidate, and identifier-only insert text), so there is no suggestion popup. If `gopls` is unavailable, completion is automatically disabled.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard (Cmd is reserved for Leap).
@@ -28,6 +29,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 | File picker / load line path | Ctrl+O / Ctrl+L (listing starts with `..`; current line filename opens new buffer or switches if already open) |
 | Save current / save all | Ctrl+W / Ctrl+Shift+S |
 | Save + fmt/fix + reload | Ctrl+F |
+| Run package (go run .) | Ctrl+R |
 | Close buffer / quit | Ctrl+Q / Ctrl+Shift+Q |
 | Undo | Ctrl+U |
 | Comment / uncomment | Ctrl+/ (selection or current line) |

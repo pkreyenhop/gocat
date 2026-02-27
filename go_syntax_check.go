@@ -80,9 +80,18 @@ func parseLineFromErr(msg string) (int, bool) {
 	if len(parts) < 3 {
 		return 0, false
 	}
-	ln, err := strconv.Atoi(strings.TrimSpace(parts[len(parts)-2]))
-	if err != nil {
-		return 0, false
+	// Parse the second numeric field from the right to get "line"
+	// in messages like "file:line:col: msg" or "line:col: msg".
+	numSeen := 0
+	for i := len(parts) - 1; i >= 0; i-- {
+		n, err := strconv.Atoi(strings.TrimSpace(parts[i]))
+		if err != nil {
+			continue
+		}
+		numSeen++
+		if numSeen == 2 {
+			return n - 1, true
+		}
 	}
-	return ln - 1, true
+	return 0, false
 }
