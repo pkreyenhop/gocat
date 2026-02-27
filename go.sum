@@ -1,2 +1,6 @@
+github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82 h1:6C8qej6f1bStuePVkLSFxoU22XBS165D3klxlzRg8F4=
+github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82/go.mod h1:xe4pgH49k4SsmkQq5OT8abwhWmnzkhpgnXeekbx2efw=
+github.com/tree-sitter/tree-sitter-haskell v0.23.1 h1:Soj44CHJTvIX/m4ekYJPFqH+sDRK4CuF6MwdRJN9tKU=
+github.com/tree-sitter/tree-sitter-haskell v0.23.1/go.mod h1:NWY55NC9F0agDcuCKOkPqAQWZQETS3cUjO+T+a21IIc=
 github.com/veandco/go-sdl2 v0.4.40 h1:fZv6wC3zz1Xt167P09gazawnpa0KY5LM7JAvKpX9d/U=
 github.com/veandco/go-sdl2 v0.4.40/go.mod h1:OROqMhHD43nT4/i9crJukyVecjPNYYuCofep6SNiAjY=

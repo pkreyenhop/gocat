@@ -44,8 +44,16 @@ go build -o gc .
 
 ## Status & Input Lines
 
-- **Status (above input):** Shows buffer name, mode (Leap/Edit/Open), cwd, `*unsaved*` marker, and last event.
+- **Status (above input):** Shows buffer name, mode (Leap/Edit/Open), language mode (`lang=text|go|markdown|c|miranda`), cwd, `*unsaved*` marker, and last event.
 - **Input (bottom):** Used for prompts (e.g., Save as). Type to respond; Enter confirms; Esc cancels.
+
+## Syntax Highlighting
+
+- Tree-sitter highlighting is enabled for:
+  - Go (`.go` or first non-empty line starting with `package `)
+  - Markdown (`.md` / `.markdown`)
+  - C (`.c` / `.h`)
+  - Miranda (`.m`, currently parsed via the Haskell Tree-sitter grammar backend)
 
 ## Tips & Examples
 

@@ -322,7 +322,7 @@ func (e *Editor) DeleteLineAtCaret() bool {
 		return false
 	}
 	start := 0
-	for i := 0; i < lineIdx; i++ {
+	for i := range lineIdx {
 		start += len([]rune(lines[i])) + 1
 	}
 	end := start + len([]rune(lines[lineIdx]))

@@ -66,6 +66,7 @@ type appState struct {
 	currentPath string // mirrors active buffer path for status messages
 	scrollLine  int
 	showHelp    bool
+	syntaxHL    *syntaxHighlighter
 }
 
 type helpEntry struct {
@@ -217,6 +218,7 @@ func main() {
 		lastX:    wX,
 		lastY:    wY,
 		openRoot: root,
+		syntaxHL: newGoHighlighter(),
 	}
 	app.initBuffers(ed)
 
@@ -1239,6 +1241,15 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
 	selCol := sdl.Color{R: 70, G: 50, B: 90, A: 255}
 	caretCol := sdl.Color{R: 217, G: 217, B: 217, A: 255} // #D9D9D9
+	syntaxKeyword := sdl.Color{R: 199, G: 150, B: 255, A: 255}
+	syntaxType := sdl.Color{R: 132, G: 204, B: 246, A: 255}
+	syntaxFunc := sdl.Color{R: 250, G: 211, B: 120, A: 255}
+	syntaxString := sdl.Color{R: 186, G: 230, B: 126, A: 255}
+	syntaxNumber := sdl.Color{R: 255, G: 173, B: 134, A: 255}
+	syntaxComment := sdl.Color{R: 138, G: 157, B: 113, A: 255}
+	syntaxHeading := sdl.Color{R: 246, G: 193, B: 119, A: 255}
+	syntaxLink := sdl.Color{R: 128, G: 214, B: 230, A: 255}
+	syntaxPunctuation := sdl.Color{R: 187, G: 161, B: 221, A: 255}
 
 	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
 	r.Clear()
@@ -1267,6 +1278,10 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 	}
 
 	lines := editor.SplitLines(app.ed.Buf)
+	lineStyles := map[int][]tokenStyle(nil)
+	if app.syntaxHL != nil {
+		lineStyles = app.syntaxHL.lineStyleFor(app.currentPath, app.ed.Buf, lines)
+	}
 	bufStatus := bufferLabel(app)
 	curDir := app.openRoot
 	if curDir == "" {
@@ -1277,6 +1292,7 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 
 	// Build condensed status line
 	parts := []string{bufStatus}
+	parts = append(parts, fmt.Sprintf("lang=%s", bufferLanguageMode(app.currentPath, app.ed.Buf)))
 	if len(app.buffers) > 0 && app.buffers[app.bufIdx].dirty {
 		parts = append(parts, "*unsaved*")
 	}
@@ -1350,7 +1366,25 @@ func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
 			_ = r.FillRect(&sdl.Rect{X: int32(left - gutterW), Y: int32(y), W: int32(w - (left - gutterW)), H: int32(lineH)})
 		}
 		drawText(r, font, left-gutterW, y, lnText, lnCol)
-		drawText(r, font, left, y, expandTabs(line, tabWidth), fg)
+		drawStyledLine(
+			r,
+			font,
+			left,
+			y,
+			line,
+			lineStyles[i],
+			cellW,
+			fg,
+			syntaxKeyword,
+			syntaxType,
+			syntaxFunc,
+			syntaxString,
+			syntaxNumber,
+			syntaxComment,
+			syntaxHeading,
+			syntaxLink,
+			syntaxPunctuation,
+		)
 
 		if i == cLine && blinkOn {
 			cColVis := visualColForRuneCol(line, cCol, tabWidth)
@@ -1462,6 +1496,120 @@ func drawText(r *sdl.Renderer, font *ttf.Font, x, y int, text string, col sdl.Co
 
 	dst := sdl.Rect{X: int32(x), Y: int32(y), W: surf.W, H: surf.H}
 	_ = r.Copy(tex, nil, &dst)
+}
+
+func bufferLanguageMode(path string, buf []rune) string {
+	switch detectSyntax(path, string(buf)) {
+	case syntaxGo:
+		return "go"
+	case syntaxMarkdown:
+		return "markdown"
+	case syntaxC:
+		return "c"
+	case syntaxMiranda:
+		return "miranda"
+	default:
+		return "text"
+	}
+}
+
+func drawStyledLine(
+	r *sdl.Renderer,
+	font *ttf.Font,
+	x, y int,
+	line string,
+	lineStyle []tokenStyle,
+	cellW int,
+	fg sdl.Color,
+	keyword sdl.Color,
+	typ sdl.Color,
+	function sdl.Color,
+	str sdl.Color,
+	number sdl.Color,
+	comment sdl.Color,
+	heading sdl.Color,
+	link sdl.Color,
+	punctuation sdl.Color,
+) {
+	runes := []rune(line)
+	if len(runes) == 0 {
+		return
+	}
+	curStyle := styleDefault
+	curX := x
+	var sb strings.Builder
+	flush := func() {
+		if sb.Len() == 0 {
+			return
+		}
+		chunk := sb.String()
+		drawText(r, font, curX, y, chunk, styleColor(curStyle, fg, keyword, typ, function, str, number, comment, heading, link, punctuation))
+		curX += utf8.RuneCountInString(chunk) * cellW
+		sb.Reset()
+	}
+
+	visualCol := 0
+	for i, ru := range runes {
+		style := styleDefault
+		if i < len(lineStyle) {
+			style = lineStyle[i]
+		}
+		if i == 0 {
+			curStyle = style
+		}
+		if style != curStyle {
+			flush()
+			curStyle = style
+		}
+		if ru == '\t' {
+			nextTab := ((visualCol / tabWidth) + 1) * tabWidth
+			for visualCol < nextTab {
+				sb.WriteByte(' ')
+				visualCol++
+			}
+			continue
+		}
+		sb.WriteRune(ru)
+		visualCol++
+	}
+	flush()
+}
+
+func styleColor(
+	style tokenStyle,
+	fg sdl.Color,
+	keyword sdl.Color,
+	typ sdl.Color,
+	function sdl.Color,
+	str sdl.Color,
+	number sdl.Color,
+	comment sdl.Color,
+	heading sdl.Color,
+	link sdl.Color,
+	punctuation sdl.Color,
+) sdl.Color {
+	switch style {
+	case styleKeyword:
+		return keyword
+	case styleType:
+		return typ
+	case styleFunction:
+		return function
+	case styleString:
+		return str
+	case styleNumber:
+		return number
+	case styleComment:
+		return comment
+	case styleHeading:
+		return heading
+	case styleLink:
+		return link
+	case stylePunctuation:
+		return punctuation
+	default:
+		return fg
+	}
 }
 
 // ======================
