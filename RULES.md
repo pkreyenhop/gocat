@@ -13,6 +13,7 @@
   - `Ctrl+O` opens a file-picker rooted at the current dir (skips dot/vendor); `..` goes up; directories end with `/` and open in-place; `Ctrl+L` loads the selected path (new buffer or switch if already loaded).
   - Startup loads multiple filenames (skips directories). Missing filenames open empty buffers and are created on first save.
   - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers.
+  - `Ctrl+F` saves current file, runs `go fmt` and `go fix`, then reloads the file into the active buffer.
   - `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits. ESC closes clean buffer or picker; dirty buffers stay open and warn.
 
 - **Editing & movement**

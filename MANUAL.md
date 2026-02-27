@@ -55,6 +55,7 @@ go build -o gc .
 - **New / cycle buffers:** `Ctrl+B` creates `<untitled>`; `Ctrl+Tab` / `Ctrl+Shift+Tab` cycles.
 - **File picker:** `Ctrl+O` opens a picker buffer rooted at the current directory; entries start with `..` to go up. Leap to a line and press `Ctrl+L` to open; directories open in-place; files open in new buffers or switch if already loaded.
 - **Save current:** `Ctrl+W` saves the active buffer. If unnamed (`<untitled>`), the input line prompts “Save as:” — type a path and press Enter.
+- **Save + fmt/fix + reload:** `Ctrl+F` saves current file, runs `go fmt` and `go fix` in the file's directory package context, then reloads the file into the current buffer.
 - **Save dirty buffers:** `Ctrl+Shift+S` saves only buffers marked dirty.
 - **Close buffer / quit:** `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits. `ESC` clears selection, closes the picker, or closes a clean buffer (dirty buffers warn in the status line).
 

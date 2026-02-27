@@ -147,6 +147,85 @@ func TestShortcutCtrlIShowsGoSymbolInfo(t *testing.T) {
 	}
 }
 
+func TestShortcutCtrlFSaveFmtFixReload(t *testing.T) {
+	ensureSDL(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc main(){\n}\n"), 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\nfunc main(){\n}\n"))
+	app.currentPath = path
+	app.buffers[0].path = path
+	app.buffers[0].dirty = true
+
+	oldRun := runFmtFix
+	defer func() { runFmtFix = oldRun }()
+	runFmtFix = func(p string) error {
+		if p != path {
+			t.Fatalf("runFmtFix path=%q, want %q", p, path)
+		}
+		return os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0644)
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_f},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+F")
+	}
+	if got := string(app.ed.Buf); got != "package main\n\nfunc main() {}\n" {
+		t.Fatalf("Ctrl+F should reload transformed file; got %q", got)
+	}
+	if app.buffers[0].dirty {
+		t.Fatal("Ctrl+F should clear dirty flag after reload")
+	}
+}
+
+func TestCtrlFReloadsEvenIfFmtFixFails(t *testing.T) {
+	ensureSDL(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc main(){\n}\n"), 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\nfunc main(){\n}\n"))
+	app.currentPath = path
+	app.buffers[0].path = path
+	app.buffers[0].dirty = true
+
+	oldRun := runFmtFix
+	defer func() { runFmtFix = oldRun }()
+	runFmtFix = func(p string) error {
+		_ = os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0644)
+		return errors.New("go fix failed")
+	}
+
+	sdl.SetModState(sdl.KMOD_CTRL)
+	if !handleEvent(&app, &sdl.KeyboardEvent{
+		Type:   sdl.KEYDOWN,
+		Repeat: 0,
+		Keysym: sdl.Keysym{Sym: sdl.K_f},
+	}) {
+		t.Fatal("unexpected quit on Ctrl+F")
+	}
+	if got := string(app.ed.Buf); got != "package main\n\nfunc main() {}\n" {
+		t.Fatalf("Ctrl+F should still reload transformed file after error; got %q", got)
+	}
+	if app.buffers[0].dirty {
+		t.Fatal("Ctrl+F should clear dirty flag after reload")
+	}
+	if !strings.Contains(app.lastEvent, "FMT/FIX ERR:") {
+		t.Fatalf("expected fmt/fix error event, got %q", app.lastEvent)
+	}
+}
+
 func TestSymbolInfoPopupScrollKeys(t *testing.T) {
 	ensureSDL(t)
 	app := appState{}

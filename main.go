@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -86,6 +87,7 @@ var helpEntries = []helpEntry{
 	{"New buffer / cycle buffers", "Ctrl+B / Ctrl+Tab"},
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
 	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
+	{"Save + fmt/fix + reload", "Ctrl+F"},
 	{"Close buffer / quit", "Ctrl+Q / Ctrl+Shift+Q"},
 	{"Undo", "Ctrl+U"},
 	{"Comment / uncomment", "Ctrl+/ (selection or current line)"},
@@ -395,6 +397,13 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 						app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
 					} else {
 						app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
+					}
+					return true
+				case sdl.K_f:
+					if err := formatFixReloadCurrent(app); err != nil {
+						app.lastEvent = fmt.Sprintf("FMT/FIX ERR: %v", err)
+					} else {
+						app.lastEvent = fmt.Sprintf("Saved, fmt/fix, reloaded %s", app.currentPath)
 					}
 					return true
 				case sdl.K_s:
@@ -837,6 +846,81 @@ func saveAll(app *appState) error {
 	if saved == 0 {
 		return fmt.Errorf("no dirty buffers to save")
 	}
+	return nil
+}
+
+var runFmtFix = goFmtAndFix
+
+func formatFixReloadCurrent(app *appState) error {
+	if app == nil || app.ed == nil || len(app.buffers) == 0 {
+		return fmt.Errorf("no active buffer")
+	}
+	if err := saveCurrent(app); err != nil {
+		return err
+	}
+	if app.currentPath == "" {
+		return fmt.Errorf("no path")
+	}
+	opErr := runFmtFix(app.currentPath)
+	reloadErr := reloadCurrentFromDisk(app)
+	if opErr != nil && reloadErr != nil {
+		return fmt.Errorf("%v; reload: %v", opErr, reloadErr)
+	}
+	if reloadErr != nil {
+		return reloadErr
+	}
+	return opErr
+}
+
+func goFmtAndFix(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("no file path")
+	}
+	errs := make([]string, 0, 2)
+
+	fmtCmd := exec.Command("gofmt", "-w", path)
+	if out, err := fmtCmd.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		errs = append(errs, "gofmt: "+msg)
+	}
+
+	fixCmd := exec.Command("go", "fix", path)
+	fixCmd.Dir = filepath.Dir(path)
+	if out, err := fixCmd.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		errs = append(errs, "go fix: "+msg)
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func reloadCurrentFromDisk(app *appState) error {
+	if app == nil || app.ed == nil {
+		return fmt.Errorf("no active buffer")
+	}
+	path := app.currentPath
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("no path")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	app.ed.Buf = []rune(string(data))
+	app.ed.Caret = clamp(app.ed.Caret, 0, len(app.ed.Buf))
+	app.ed.Sel = editor.Sel{}
+	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
+	app.buffers[app.bufIdx].dirty = false
+	app.buffers[app.bufIdx].path = path
 	return nil
 }
 
