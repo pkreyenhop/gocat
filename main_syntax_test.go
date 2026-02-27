@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 
 	"gc/editor"
@@ -81,5 +82,57 @@ func TestSyntaxHighlighterLineStyleForLanguages(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("%s: expected highlighted tokens, got none", tc.name)
 		}
+	}
+}
+
+func TestIdentPrefixStart(t *testing.T) {
+	buf := []rune("fmt.Prin")
+	if got := identPrefixStart(buf, len(buf)); got != 4 {
+		t.Fatalf("identPrefixStart=%d, want 4", got)
+	}
+	if got := identPrefixStart([]rune("abc"), 0); got != 0 {
+		t.Fatalf("identPrefixStart at 0=%d, want 0", got)
+	}
+}
+
+func TestStripSnippet(t *testing.T) {
+	in := "Printf(${1:format}, $0)"
+	got := stripSnippet(in)
+	want := "Printf(format, )"
+	if got != want {
+		t.Fatalf("stripSnippet=%q, want %q", got, want)
+	}
+}
+
+func TestParseCompletionItems(t *testing.T) {
+	raw := json.RawMessage(`[{"label":"Printf","insertText":"Printf(${1:format})","insertTextFormat":2}]`)
+	items := parseCompletionItems(raw)
+	if len(items) != 1 {
+		t.Fatalf("len(items)=%d, want 1", len(items))
+	}
+	if items[0].Insert != "Printf(format)" {
+		t.Fatalf("insert=%q, want %q", items[0].Insert, "Printf(format)")
+	}
+}
+
+func TestExtremelySureCompletion(t *testing.T) {
+	item, ok := extremelySureCompletion("Prin", []completionItem{
+		{Label: "Println", Insert: "Println"},
+	})
+	if !ok {
+		t.Fatalf("expected high-confidence completion")
+	}
+	if item.Insert != "Println" {
+		t.Fatalf("insert=%q, want %q", item.Insert, "Println")
+	}
+
+	if _, ok := extremelySureCompletion("Pr", []completionItem{{Label: "Println", Insert: "Println"}}); ok {
+		t.Fatalf("expected low confidence for short prefix")
+	}
+	if _, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println"}, {Label: "Printf", Insert: "Printf"}}); ok {
+		t.Fatalf("expected low confidence for multiple candidates")
+	}
+	if _, ok := extremelySureCompletion("Prin", []completionItem{{Label: "Println", Insert: "Println()"}}); ok {
+		t.Fatalf("expected low confidence for punctuation insert text")
 	}
 }

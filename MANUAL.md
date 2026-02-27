@@ -33,6 +33,20 @@ go build -o gc .
 - **Undo:** `Ctrl+U` (single-step).
 - **Comment toggle:** `Ctrl+/` toggles `//` on selection or current line.
 - **Clipboard:** `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
+- **Go autocompletion:** In Go buffers, completion is non-interruptive. The editor auto-completes only when there is a single high-confidence `gopls` result (prefix length at least 3 and identifier-safe insert text); no suggestion popup is shown.
+
+## Go Completion Details
+
+- **Activation:** Completion runs only in Go mode (`lang=go` in status line).
+- **Engine:** The editor starts `gopls` lazily and communicates over LSP.
+- **When it updates:** Typing identifier characters in a Go buffer triggers a confidence check.
+- **Accept semantics:** When confidence is high, the identifier prefix directly before the caret is replaced automatically.
+- **Failure mode:** If `gopls` is unavailable or fails, completion is disabled for that session; the editor remains fully usable.
+- **Limitations (current):**
+  - Go-only completion
+  - No completion choices/popup UI; completion only fires on a single strong candidate
+  - Snippet placeholders are flattened to plain text
+  - No completion docs/hover panel yet
 
 ## Buffers & Files
 

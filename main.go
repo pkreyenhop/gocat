@@ -67,6 +67,8 @@ type appState struct {
 	scrollLine  int
 	showHelp    bool
 	syntaxHL    *syntaxHighlighter
+	gopls       *goplsClient
+	noGopls     bool
 }
 
 type helpEntry struct {
@@ -219,6 +221,7 @@ func main() {
 		lastY:    wY,
 		openRoot: root,
 		syntaxHL: newGoHighlighter(),
+		gopls:    newGoplsClient(),
 	}
 	app.initBuffers(ed)
 
@@ -232,6 +235,7 @@ func main() {
 
 	sdl.StartTextInput()
 	defer sdl.StopTextInput()
+	defer app.gopls.close()
 
 	running := true
 	for running {
@@ -651,6 +655,7 @@ func handleEvent(app *appState, ev sdl.Event) bool {
 			}
 			ed.InsertText(text)
 			app.markDirty()
+			maybeAutoComplete(app, text)
 		}
 	}
 
@@ -1511,6 +1516,76 @@ func bufferLanguageMode(path string, buf []rune) string {
 	default:
 		return "text"
 	}
+}
+
+func maybeAutoComplete(app *appState, typed string) {
+	if app == nil || app.ed == nil || app.noGopls || app.inputActive || app.open.Active || app.ed.Leap.Active {
+		return
+	}
+	if detectSyntax(app.currentPath, string(app.ed.Buf)) != syntaxGo {
+		return
+	}
+	if len([]rune(typed)) != 1 {
+		return
+	}
+	r := []rune(typed)[0]
+	if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+		return
+	}
+	prefixStart := identPrefixStart(app.ed.Buf, app.ed.Caret)
+	prefix := string(app.ed.Buf[prefixStart:app.ed.Caret])
+	if len(prefix) < 3 {
+		return
+	}
+	lines := editor.SplitLines(app.ed.Buf)
+	line := editor.CaretLineAt(lines, app.ed.Caret)
+	col := editor.CaretColAt(lines, app.ed.Caret)
+	if line < 0 || col < 0 {
+		return
+	}
+	items, err := app.gopls.complete(app.currentPath, string(app.ed.Buf), line, col)
+	if err != nil {
+		app.noGopls = true
+		app.lastEvent = "Autocomplete disabled (gopls unavailable)"
+		return
+	}
+	item, ok := extremelySureCompletion(prefix, items)
+	if !ok {
+		return
+	}
+	insert := []rune(item.Insert)
+	next := make([]rune, 0, len(app.ed.Buf)-(app.ed.Caret-prefixStart)+len(insert))
+	next = append(next, app.ed.Buf[:prefixStart]...)
+	next = append(next, insert...)
+	next = append(next, app.ed.Buf[app.ed.Caret:]...)
+	app.ed.Buf = next
+	app.ed.Caret = prefixStart + len(insert)
+	app.markDirty()
+}
+
+func extremelySureCompletion(prefix string, items []completionItem) (completionItem, bool) {
+	if len(items) != 1 || len(prefix) < 3 {
+		return completionItem{}, false
+	}
+	item := items[0]
+	insert := item.Insert
+	if insert == "" {
+		insert = item.Label
+	}
+	if len(insert) <= len(prefix) {
+		return completionItem{}, false
+	}
+	if !strings.HasPrefix(insert, prefix) {
+		return completionItem{}, false
+	}
+	for _, r := range insert {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return completionItem{}, false
+	}
+	item.Insert = insert
+	return item, true
 }
 
 func drawStyledLine(

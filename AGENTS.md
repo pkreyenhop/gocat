@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 - Identity: the editor is called “gc” (from GoCat) and draws inspiration from the Canon Cat, Helix, acme, AMP, and Emacs; keep README and RULES aligned with that positioning.
 - `main.go` — SDL2/SDL2_ttf UI driver: window setup, event loop, rendering, and clipboard wiring. Depends on the headless editor package.
+- `lsp_gopls.go` — minimal JSON-RPC client for `gopls` completion requests and snippet sanitization.
 - `editor/` — UI-free core: buffer management, leap/search, selection, clipboard abstraction, and helpers for line/column math.
 - `editor/editor_logic_test.go` — behaviour-focused tests that exercise the headless editor via a small fixture DSL.
 - Root tests: `main_open_test.go` (open/find helpers + startup filtering), `main_buffer_test.go` (buffer switching), `main_shortcuts_test.go` (shortcut/chaos/latency coverage), `main_help_test.go` (README/help sync), `main_gui_test.go` (GUI smoke/input, gated behind `-tags gui`).
@@ -24,6 +25,7 @@
 - Keep comments brief and focused on behaviour (e.g., selection anchoring, wrap semantics).
 - Startup filtering: `filterArgsToFiles` only loads regular files from CLI args (skips directories), and `loadStartupFiles` creates new buffers per file. Help overlay/buffer text is sourced from `helpEntries` and README; update both in lockstep.
  - Navigation shortcuts: arrows and PageUp/Down repeat, `Ctrl+,`/`Ctrl+.` page scroll (Shift extends selection), `Ctrl+A/E`, `Ctrl+Shift+A/E`, `Ctrl+K`, `Ctrl+U`. ESC clears selection, closes picker, or closes a clean buffer (dirty buffers stay open with a warning). Status bar shows `lang=<mode>` and `*unsaved*` when dirty; input line at bottom handles prompts like Save As. Leap search is case-insensitive and uses a line-number gutter with current-line highlight.
+ - Go-mode autocompletion is powered by `gopls` and is non-interruptive: auto-insert only on a single high-confidence candidate (prefix >= 3 and identifier-safe insert text), with no popup selection UI.
  - Syntax highlighting uses Tree-sitter for Go (`.go` / `package`), Markdown (`.md`/`.markdown`), C (`.c`/`.h`), and Miranda (`.m`, via Haskell grammar backend).
 
 ## Testing Guidelines

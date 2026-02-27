@@ -10,6 +10,7 @@ This prototype is a small SDL-powered text editor that demonstrates Canon-Cat-st
 - **Dual-Cmd selection**: While leaping with one Command key held, press the other Command key to start a selection anchored at the original caret; further Leap moves extend the selection. Ctrl+Cmd (Left/Right) triggers Leap Again without entering quasimode.
 - **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Tab`/`Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
 - **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start. Passing a missing filename opens an empty buffer with that name; the file is created on first save.
+- **Go autocompletion**: In Go buffers, completion runs in a non-interruptive mode. The editor auto-completes only when it is highly confident (identifier prefix length at least 3, exactly one `gopls` candidate, and identifier-only insert text), so there is no suggestion popup. If `gopls` is unavailable, completion is automatically disabled.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard (Cmd is reserved for Leap).
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
 - **Rendering cues**: Purple palette; status line shows mode/query/buffer, `lang=<mode>`, and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined. Go buffers (`.go` or `package ...`), Markdown buffers (`.md`/`.markdown`), C buffers (`.c`/`.h`), and Miranda buffers (`.m`) use Tree-sitter token highlighting (Miranda currently uses the Haskell Tree-sitter grammar backend).
@@ -46,6 +47,19 @@ go build -o gc .
 
 `make build` does the same. Pass a filename to open it at startup (also sets the picker root to that file's directory).
 
+## Go Completion
+
+- Completion is enabled only when the active buffer language mode is `go`.
+- Backend: `gopls` over LSP (`stdio` JSON-RPC).
+- Trigger: typing identifier characters in a Go buffer checks for a high-confidence completion.
+- Insert behavior: when confidence is high enough, the current identifier prefix at caret is replaced automatically.
+- If `gopls` is missing or returns errors/timeouts, completion is disabled for the session and editing continues normally.
+- Current scope/limitations:
+  - Go-only completion (no completion for Markdown/C/Miranda/text modes)
+  - Auto-complete only when prefix length is at least 3 and there is exactly one identifier-safe candidate (no popup choices)
+  - Basic completion items only (snippet placeholders are stripped to plain text)
+  - No hover/signature/help UI yet
+
 ## Testing and Structure
 
 - Headless logic lives in `editor/` (no SDL dependency). Run unit tests with `go test ./editor`.
@@ -58,3 +72,4 @@ go build -o gc .
 - Creates an `editor.Editor`, injects an SDL-backed clipboard, and enters an event loop that maps Cmd+typing into Leap (case-insensitive), dual-Cmd selection, Ctrl+Cmd “Leap Again,” Ctrl+C/X/V clipboard, `Ctrl+B` new `<untitled>` buffer, `Tab`/`Shift+Tab` buffer cycle, `Ctrl+O` file picker, `Ctrl+L` load selected file, `Ctrl+W` save (prompts for filename when unnamed via the input line), `Ctrl+Q` quit current buffer, and plain text/caret edits when Leap is inactive.
 - Captures text via `TEXTINPUT` events (with KEYDOWN fallback when Cmd suppresses them on macOS) and records the last event/modifiers for on-screen debugging.
 - Renders the buffer with a status line above the input line (showing mode/query/buffer, `lang=<mode>`, cwd, `*unsaved*`, last event), draws line numbers in a gutter with current-line highlight, underlines the current match during an active Leap, and applies Tree-sitter highlighting for Go, Markdown, C, and Miranda (`.m`) buffers.
+- For Go buffers, requests completion items from `gopls` via LSP and auto-inserts only high-confidence completions (no popup list).

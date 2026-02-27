@@ -23,6 +23,7 @@
   - `Ctrl+K` kills to end of line; `Ctrl+U` undo (single-step).
   - Comment toggle: `Ctrl+/` toggles `//` on selection or current line.
   - Clipboard: `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
+  - Go autocompletion: in Go mode, typing identifier characters triggers `gopls`; completion auto-inserts only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
