@@ -49,7 +49,7 @@ type bufferSlot struct {
 type appState struct {
 	ed               *editor.Editor // active buffer editor (mirrors buffers[bufIdx].ed)
 	lastEvent        string
-	lastMods         sdl.Keymod
+	lastMods         modMask
 	blinkAt          time.Time
 	lastSpaceAt      time.Time
 	lastSpaceLn      int
@@ -75,6 +75,7 @@ type appState struct {
 	syntaxCheck      *goSyntaxChecker
 	gopls            *goplsClient
 	noGopls          bool
+	clipboard        editor.Clipboard
 }
 
 type helpEntry struct {
@@ -136,7 +137,9 @@ func (app *appState) syncActiveBuffer() {
 
 func (app *appState) addBuffer() {
 	nb := bufferSlot{ed: editor.NewEditor("")}
-	nb.ed.SetClipboard(sdlClipboard{})
+	if app.clipboard != nil {
+		nb.ed.SetClipboard(app.clipboard)
+	}
 	app.buffers = append(app.buffers, nb)
 	app.bufIdx = len(app.buffers) - 1
 	app.syncActiveBuffer()
@@ -148,7 +151,9 @@ func (app *appState) addPickerBuffer(lines []string) {
 		picker:     true,
 		pickerRoot: app.openRoot,
 	}
-	nb.ed.SetClipboard(sdlClipboard{})
+	if app.clipboard != nil {
+		nb.ed.SetClipboard(app.clipboard)
+	}
 	app.buffers = append(app.buffers, nb)
 	app.bufIdx = len(app.buffers) - 1
 	app.syncActiveBuffer()
@@ -217,7 +222,8 @@ func main() {
 	ed := editor.NewEditor(
 		"",
 	)
-	ed.SetClipboard(sdlClipboard{})
+	clip := sdlClipboard{}
+	ed.SetClipboard(clip)
 
 	wW, wH := win.GetSize()
 	wX, wY := win.GetPosition()
@@ -233,6 +239,7 @@ func main() {
 		syntaxHL:    newGoHighlighter(),
 		syntaxCheck: newGoSyntaxChecker(),
 		gopls:       newGoplsClient(),
+		clipboard:   clip,
 	}
 	app.initBuffers(ed)
 
@@ -265,511 +272,41 @@ func main() {
 // handleEvent processes a single SDL event and mutates app/editor state.
 // It returns false when the app should quit.
 func handleEvent(app *appState, ev sdl.Event) bool {
-	ed := app.ed
-
-	// Input prompt takes priority (save dialog)
 	if app.inputActive {
 		return handleInputEvent(app, ev)
 	}
-
-	// Modal open prompt takes precedence over other input
 	if app.open.Active {
 		return handleOpenEvent(app, ev)
 	}
-
 	switch e := ev.(type) {
-
 	case *sdl.QuitEvent:
-		// Ignore quit while in Leap quasimode so Cmd+Q doesn't kill the app mid-leap.
-		if ed.Leap.Active {
+		if app.ed != nil && app.ed.Leap.Active {
 			return true
 		}
 		return false
-
 	case *sdl.WindowEvent:
-		// Avoid minimizing/hiding the window from system combos during Leap; restore it.
 		if (e.Event == sdl.WINDOWEVENT_MINIMIZED || e.Event == sdl.WINDOWEVENT_HIDDEN) && app.win != nil {
 			restoreWindow(app)
-			return true
 		}
 		return true
-
 	case *sdl.KeyboardEvent:
-		app.blinkAt = time.Now()
-		sc := e.Keysym.Scancode
-		sym := e.Keysym.Sym
-		mods := sdl.GetModState()
-		app.lastMods = mods
-
-		// Basic event string
-		if e.Type == sdl.KEYDOWN {
-			app.lastEvent = fmt.Sprintf("KEYDOWN sc=%s key=%s repeat=%d mods=%s",
-				sdl.GetScancodeName(sc), sdl.GetKeyName(sym), e.Repeat, modsString(mods))
-		} else {
-			app.lastEvent = fmt.Sprintf("KEYUP   sc=%s key=%s mods=%s",
-				sdl.GetScancodeName(sc), sdl.GetKeyName(sym), modsString(mods))
-		}
-		if Debug {
-			fmt.Println(app.lastEvent)
-		}
-
-		if e.Type == sdl.KEYDOWN && app.symbolInfoPopup != "" {
-			switch sym {
-			case sdl.K_UP:
-				app.symbolInfoScroll = max(0, app.symbolInfoScroll-1)
-				return true
-			case sdl.K_DOWN:
-				app.symbolInfoScroll++
-				return true
-			case sdl.K_PAGEUP:
-				app.symbolInfoScroll = max(0, app.symbolInfoScroll-6)
-				return true
-			case sdl.K_PAGEDOWN:
-				app.symbolInfoScroll += 6
-				return true
-			case sdl.K_HOME:
-				app.symbolInfoScroll = 0
-				return true
-			case sdl.K_END:
-				app.symbolInfoScroll = 1 << 20
-				return true
-			}
-		}
-
-		// Escape: clear selection, close picker, or close clean buffer; no global quit
-		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && sym == sdl.K_ESCAPE && !ed.Leap.Active {
-			if app.symbolInfoPopup != "" {
-				app.symbolInfoPopup = ""
-				app.symbolInfoScroll = 0
-				return true
-			}
-			if ed.Sel.Active {
-				ed.Sel.Active = false
-				ed.Leap.Selecting = false
-				return true
-			}
-			if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
-				app.closeBuffer()
-				app.lastEvent = "Closed file picker"
-				return true
-			}
-			if len(app.buffers) > 0 && !app.buffers[app.bufIdx].dirty {
-				remaining := app.closeBuffer()
-				app.lastEvent = "Closed clean buffer"
-				if remaining == 0 {
-					return false
-				}
-				return true
-			}
-			app.lastEvent = "Unsaved changes — press Ctrl+W to save or Ctrl+Q to close"
-			return true
-		}
-
-		// Clipboard + file ops on Ctrl (not Cmd, because Cmd is Leap keys)
-		if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-			if ctrlHeld {
-				switch sym {
-				case sdl.K_TAB:
-					delta := 1
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						delta = -1
-					}
-					app.switchBuffer(delta)
-					app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
-					return true
-				case sdl.K_q:
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						app.lastEvent = "Quit (discard all buffers)"
-						return false
-					}
-					// quit current buffer only
-					remaining := app.closeBuffer()
-					if remaining == 0 {
-						app.lastEvent = "Closed last buffer, quitting"
-						return false
-					}
-					app.lastEvent = fmt.Sprintf("Closed buffer, now %d/%d", app.bufIdx+1, remaining)
-					return true
-				case sdl.K_b:
-					app.addBuffer()
-					app.lastEvent = fmt.Sprintf("New buffer %d/%d", app.bufIdx+1, len(app.buffers))
-					return true
-				case sdl.K_w:
-					if err := saveCurrent(app); err != nil {
-						app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
-					} else {
-						app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
-					}
-					return true
-				case sdl.K_f:
-					if err := formatFixReloadCurrent(app); err != nil {
-						app.lastEvent = fmt.Sprintf("FMT/FIX ERR: %v", err)
-					} else {
-						app.lastEvent = fmt.Sprintf("Saved, fmt/fix, reloaded %s", app.currentPath)
-					}
-					return true
-				case sdl.K_s:
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						if err := saveAll(app); err != nil {
-							app.lastEvent = fmt.Sprintf("SAVE ALL ERR: %v", err)
-						} else {
-							app.lastEvent = "Saved dirty buffers"
-						}
-						return true
-					}
-					if err := saveCurrent(app); err != nil {
-						app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
-					} else {
-						app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
-					}
-					return true
-				case sdl.K_r:
-					if err := runCurrentPackage(app); err != nil {
-						app.lastEvent = fmt.Sprintf("RUN ERR: %v", err)
-					} else {
-						app.lastEvent = "Running: go run ."
-					}
-					return true
-				case sdl.K_a:
-					lines := editor.SplitLines(ed.Buf)
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						ed.CaretToBufferEdge(lines, false, (mods&sdl.KMOD_SHIFT) != 0)
-					} else {
-						ed.CaretToLineEdge(lines, false, false)
-					}
-					return true
-				case sdl.K_e:
-					lines := editor.SplitLines(ed.Buf)
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						ed.CaretToBufferEdge(lines, true, (mods&sdl.KMOD_SHIFT) != 0)
-					} else {
-						ed.CaretToLineEdge(lines, true, false)
-					}
-					return true
-				case sdl.K_k:
-					ed.KillToLineEnd(editor.SplitLines(ed.Buf))
-					app.markDirty()
-					return true
-				case sdl.K_u:
-					ed.Undo()
-					app.lastEvent = "Undo"
-					app.markDirty()
-					return true
-				case sdl.K_i:
-					app.symbolInfoPopup = showSymbolInfo(app)
-					app.symbolInfoScroll = 0
-					return true
-				case sdl.K_SLASH:
-					if (mods & sdl.KMOD_SHIFT) != 0 {
-						app.addBuffer()
-						app.ed.Buf = []rune(helpText())
-						app.currentPath = ""
-						app.buffers[app.bufIdx].path = ""
-						app.lastEvent = "Opened shortcuts buffer"
-						return true
-					}
-					toggleComment(ed)
-					app.lastEvent = "Toggled comment"
-					app.markDirty()
-					return true
-				case sdl.K_o:
-					listRoot := app.openRoot
-					if listRoot == "" {
-						if cwd, err := os.Getwd(); err == nil {
-							listRoot = cwd
-						}
-					}
-					// If we're already in a picker, go up one directory.
-					if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
-						listRoot = filepath.Dir(listRoot)
-					}
-					list, err := pickerLines(listRoot, 500)
-					if err != nil {
-						app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
-						return true
-					}
-					if len(list) == 0 {
-						app.lastEvent = "OPEN: no files under root"
-						return true
-					}
-					app.openRoot = listRoot
-					if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
-						// reuse existing picker buffer
-						app.buffers[app.bufIdx].pickerRoot = listRoot
-						app.buffers[app.bufIdx].ed.Buf = []rune(strings.Join(list, "\n"))
-						app.ed = app.buffers[app.bufIdx].ed
-						app.currentPath = ""
-					} else {
-						app.addPickerBuffer(list)
-					}
-					app.lastEvent = fmt.Sprintf("OPEN: file picker (%d files). Leap to a line, Ctrl+L to load", len(list))
-					return true
-				case sdl.K_l:
-					if err := loadFileAtCaret(app); err != nil {
-						app.lastEvent = fmt.Sprintf("LOAD ERR: %v", err)
-					} else {
-						app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
-					}
-					return true
-				case sdl.K_COMMA:
-					lines := editor.SplitLines(ed.Buf)
-					ed.MoveCaretPage(lines, 20, editor.DirBack, (mods&sdl.KMOD_SHIFT) != 0)
-					return true
-				case sdl.K_PERIOD:
-					lines := editor.SplitLines(ed.Buf)
-					ed.MoveCaretPage(lines, 20, editor.DirFwd, (mods&sdl.KMOD_SHIFT) != 0)
-					return true
-				case sdl.K_c:
-					ed.CopySelection()
-					return true
-				case sdl.K_x:
-					ed.CutSelection()
-					app.markDirty()
-					return true
-				case sdl.K_v:
-					ed.PasteClipboard()
-					app.markDirty()
-					return true
-				}
-			}
-			if sym == sdl.K_TAB && !ed.Leap.Active {
-				if tryManualCompletion(app) {
-					app.lastEvent = "Completed"
-				}
-				return true
-			}
-		}
-
-		// Leap Again: Ctrl + Cmd (Left or Right) without entering quasimode typing
-		// We trigger on KEYDOWN of LGUI/RGUI while Ctrl is held and leap is NOT active.
-		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
-			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-			if ctrlHeld {
-				if sc == sdl.SCANCODE_RGUI {
-					ed.LeapAgain(editor.DirFwd)
-					return true
-				}
-				if sc == sdl.SCANCODE_LGUI {
-					ed.LeapAgain(editor.DirBack)
-					return true
-				}
-			}
-		}
-
-		// Track held Cmd state
-		if e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-			if sc == sdl.SCANCODE_LGUI {
-				ed.Leap.HeldL = true
-			}
-			if sc == sdl.SCANCODE_RGUI {
-				ed.Leap.HeldR = true
-			}
-		}
-		if e.Type == sdl.KEYUP {
-			if sc == sdl.SCANCODE_LGUI {
-				ed.Leap.HeldL = false
-			}
-			if sc == sdl.SCANCODE_RGUI {
-				ed.Leap.HeldR = false
-			}
-		}
-
-		// Start Leap quasimode when first Cmd goes down (and Ctrl is NOT held)
-		if e.Type == sdl.KEYDOWN && e.Repeat == 0 && !ed.Leap.Active {
-			ctrlHeld := (mods & sdl.KMOD_CTRL) != 0
-			if !ctrlHeld {
-				if sc == sdl.SCANCODE_RGUI {
-					ed.LeapStart(editor.DirFwd)
-					beginLeapGrab(app)
-					return true
-				}
-				if sc == sdl.SCANCODE_LGUI {
-					ed.LeapStart(editor.DirBack)
-					beginLeapGrab(app)
-					return true
-				}
-			}
-		}
-
-		// While leaping, if the OTHER Cmd is pressed, enable selection mode + anchor
-		if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-			if (sc == sdl.SCANCODE_LGUI && ed.Leap.HeldR) || (sc == sdl.SCANCODE_RGUI && ed.Leap.HeldL) {
-				ed.BeginLeapSelection()
-			}
-		}
-
-		// End Leap when BOTH Cmd keys are up
-		if e.Type == sdl.KEYUP && ed.Leap.Active {
-			if !ed.Leap.HeldL && !ed.Leap.HeldR {
-				ed.LeapEndCommit()
-				endLeapGrab(app)
-				return true
-			}
-		}
-
-		// While leaping: lifecycle keys and KEYDOWN fallback for pattern capture
-		if ed.Leap.Active && e.Type == sdl.KEYDOWN && e.Repeat == 0 {
-			switch sym {
-			case sdl.K_ESCAPE:
-				ed.LeapCancel()
-				endLeapGrab(app)
-				return true
-			case sdl.K_BACKSPACE:
-				ed.LeapBackspace()
-				return true
-			case sdl.K_RETURN, sdl.K_KP_ENTER:
-				ed.LeapEndCommit()
-				endLeapGrab(app)
-				return true
-			}
-
-			// KEYDOWN fallback capture (Cmd suppresses TEXTINPUT on macOS)
-			if r, ok := keyToRune(sym, mods); ok {
-				ed.Leap.LastSrc = "keydown"
-				ed.LeapAppend(string(r))
-				return true
-			}
-		}
-
-		// Normal editing (outside leap). Key repeat moves repeatedly.
-		if !ed.Leap.Active && e.Type == sdl.KEYDOWN {
-			lines := editor.SplitLines(ed.Buf)
-			switch sym {
-			case sdl.K_BACKSPACE:
-				ed.BackspaceOrDeleteSelection(true)
-				app.markDirty()
-			case sdl.K_DELETE:
-				if (mods & sdl.KMOD_SHIFT) != 0 {
-					if ed.DeleteLineAtCaret() {
-						app.markDirty()
-					}
-				} else if ed.DeleteWordAtCaret() {
-					app.markDirty()
-				}
-			case sdl.K_LEFT:
-				ed.MoveCaret(-1, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_RIGHT:
-				ed.MoveCaret(1, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_UP:
-				ed.MoveCaretLine(lines, -1, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_DOWN:
-				ed.MoveCaretLine(lines, 1, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_PAGEDOWN:
-				ed.MoveCaretPage(lines, 20, editor.DirFwd, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_PAGEUP:
-				ed.MoveCaretPage(lines, 20, editor.DirBack, (mods&sdl.KMOD_SHIFT) != 0)
-			case sdl.K_RETURN, sdl.K_KP_ENTER:
-				if e.Repeat == 0 { // avoid spamming newlines on OS-level repeat
-					ed.InsertText("\n")
-					app.markDirty()
-				}
-			}
-		}
-
+		return handleKeyEvent(app, sdlKeyEvent(e))
 	case *sdl.TextInputEvent:
-		app.blinkAt = time.Now()
-		text := textInputString(e)
-		app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(sdl.GetModState()))
-		if Debug {
-			fmt.Println(app.lastEvent)
-		}
-
-		if text == "" || !utf8.ValidString(text) {
-			return true
-		}
-		if text == "\t" {
-			// Tab is reserved for buffer switching.
-			return true
-		}
-
-		if ed.Leap.Active {
-			ed.Leap.LastSrc = "textinput"
-			ed.LeapAppend(text)
-		} else {
-			if text == " " {
-				lines := editor.SplitLines(ed.Buf)
-				lineIdx := editor.CaretLineAt(lines, ed.Caret)
-				col := editor.CaretColAt(lines, ed.Caret)
-				double := app.lastSpaceLn == lineIdx && time.Since(app.lastSpaceAt) < 2*time.Second
-				app.lastSpaceLn = lineIdx
-				app.lastSpaceAt = time.Now()
-				if double && ed.Caret > 0 && ed.Buf[ed.Caret-1] == ' ' {
-					ed.BackspaceOrDeleteSelection(true)
-					lines = editor.SplitLines(ed.Buf)
-					col = editor.CaretColAt(lines, ed.Caret)
-					lineStart := ed.Caret - col
-					if lineStart < 0 {
-						lineStart = 0
-					}
-					// Move to first non-tab/space to compute current indent
-					indentEnd := lineStart
-					for indentEnd < len(ed.Buf) && (ed.Buf[indentEnd] == '\t' || ed.Buf[indentEnd] == ' ') {
-						indentEnd++
-					}
-					ed.Caret = indentEnd
-					ed.InsertText("\t")
-					app.lastSpaceLn = lineIdx
-					return true
-				}
-			} else {
-				app.lastSpaceLn = -1
-			}
-			ed.InsertText(text)
-			app.markDirty()
-		}
+		return handleTextEvent(app, textInputString(e), sdlToMods(sdl.GetModState()))
+	default:
+		return true
 	}
-
-	return true
 }
 
 func handleOpenEvent(app *appState, ev sdl.Event) bool {
 	switch e := ev.(type) {
 	case *sdl.KeyboardEvent:
-		if e.Type != sdl.KEYDOWN || e.Repeat != 0 {
-			return true
-		}
-		switch e.Keysym.Sym {
-		case sdl.K_ESCAPE:
-			app.open.Active = false
-			app.lastEvent = "Open cancelled"
-			return true
-		case sdl.K_BACKSPACE:
-			if len(app.open.Query) > 0 {
-				rs := []rune(app.open.Query)
-				app.open.Query = string(rs[:len(rs)-1])
-				app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
-			}
-			return true
-		case sdl.K_RETURN, sdl.K_KP_ENTER:
-			app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
-			if len(app.open.Matches) == 1 {
-				if err := openPath(app, app.open.Matches[0]); err != nil {
-					app.lastEvent = fmt.Sprintf("OPEN ERR: %v", err)
-				} else {
-					app.lastEvent = fmt.Sprintf("Opened %s", app.currentPath)
-				}
-				app.open.Active = false
-			} else {
-				app.lastEvent = fmt.Sprintf("OPEN: %d matches; refine", len(app.open.Matches))
-			}
-			return true
-		default:
-			if r, ok := keyToRune(e.Keysym.Sym, sdl.Keymod(e.Keysym.Mod)); ok {
-				app.open.Query += string(r)
-				app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
-			}
-			return true
-		}
+		return handleOpenKeyEvent(app, sdlKeyEvent(e))
 	case *sdl.TextInputEvent:
-		text := textInputString(e)
-		if text != "" && utf8.ValidString(text) {
-			app.open.Query += text
-			app.open.Matches = findMatches(app.openRoot, app.open.Query, 50)
-		}
+		return handleOpenTextEvent(app, textInputString(e))
+	default:
 		return true
 	}
-	return true
 }
 
 func restoreWindow(app *appState) {
@@ -2113,61 +1650,7 @@ func visualLen(line string, width int) int {
 	return visualColForRuneCol(line, len([]rune(line)), width)
 }
 
-// KEYDOWN fallback capture (US-ish layout) for when Cmd suppresses TEXTINPUT.
-func keyToRune(sym sdl.Keycode, mods sdl.Keymod) (rune, bool) {
-	shift := (mods & sdl.KMOD_SHIFT) != 0
-
-	// letters
-	if sym >= sdl.K_a && sym <= sdl.K_z {
-		r := rune('a' + (sym - sdl.K_a))
-		if shift {
-			r = rune('A' + (sym - sdl.K_a))
-		}
-		return r, true
-	}
-
-	// digits
-	if sym >= sdl.K_0 && sym <= sdl.K_9 {
-		// (no shifted symbols for simplicity)
-		r := rune('0' + (sym - sdl.K_0))
-		return r, true
-	}
-
-	// some punctuation
-	switch sym {
-	case sdl.K_SPACE:
-		return ' ', true
-	case sdl.K_PERIOD:
-		if shift {
-			return '>', true
-		}
-		return '.', true
-	case sdl.K_COMMA:
-		if shift {
-			return '<', true
-		}
-		return ',', true
-	case sdl.K_MINUS:
-		if shift {
-			return '_', true
-		}
-		return '-', true
-	case sdl.K_EQUALS:
-		if shift {
-			return '+', true
-		}
-		return '=', true
-	case sdl.K_SLASH:
-		if shift {
-			return '?', true
-		}
-		return '/', true
-	}
-
-	return 0, false
-}
-
-func modsString(m sdl.Keymod) string {
+func modsString(m modMask) string {
 	parts := ""
 	add := func(s string) {
 		if parts != "" {
@@ -2175,34 +1658,186 @@ func modsString(m sdl.Keymod) string {
 		}
 		parts += s
 	}
-	if (m & sdl.KMOD_LSHIFT) != 0 {
+	if (m & modShift) != 0 {
 		add("LSHIFT")
 	}
-	if (m & sdl.KMOD_RSHIFT) != 0 {
-		add("RSHIFT")
-	}
-	if (m & sdl.KMOD_LCTRL) != 0 {
+	if (m & modCtrl) != 0 {
 		add("LCTRL")
 	}
-	if (m & sdl.KMOD_RCTRL) != 0 {
-		add("RCTRL")
-	}
-	if (m & sdl.KMOD_LGUI) != 0 {
+	if (m & modLCmd) != 0 {
 		add("LCMD")
 	}
-	if (m & sdl.KMOD_RGUI) != 0 {
+	if (m & modRCmd) != 0 {
 		add("RCMD")
 	}
-	if (m & sdl.KMOD_LALT) != 0 {
+	if (m & modLAlt) != 0 {
 		add("LALT")
 	}
-	if (m & sdl.KMOD_RALT) != 0 {
+	if (m & modRAlt) != 0 {
 		add("RALT")
 	}
 	if parts == "" {
 		return "none"
 	}
 	return parts
+}
+
+func sdlToMods(m sdl.Keymod) modMask {
+	var out modMask
+	if (m & sdl.KMOD_SHIFT) != 0 {
+		out |= modShift
+	}
+	if (m & sdl.KMOD_CTRL) != 0 {
+		out |= modCtrl
+	}
+	if (m & sdl.KMOD_LGUI) != 0 {
+		out |= modLCmd
+	}
+	if (m & sdl.KMOD_RGUI) != 0 {
+		out |= modRCmd
+	}
+	if (m & sdl.KMOD_LALT) != 0 {
+		out |= modLAlt
+	}
+	if (m & sdl.KMOD_RALT) != 0 {
+		out |= modRAlt
+	}
+	return out
+}
+
+func sdlKeyEvent(e *sdl.KeyboardEvent) keyEvent {
+	if e == nil {
+		return keyEvent{}
+	}
+	return keyEvent{
+		down:   e.Type == sdl.KEYDOWN,
+		repeat: int(e.Repeat),
+		key:    sdlToKey(e.Keysym.Sym),
+		mods:   sdlToMods(sdl.GetModState()),
+	}
+}
+
+func sdlToKey(k sdl.Keycode) keyCode {
+	switch k {
+	case sdl.K_UP:
+		return keyUp
+	case sdl.K_DOWN:
+		return keyDown
+	case sdl.K_PAGEUP:
+		return keyPageUp
+	case sdl.K_PAGEDOWN:
+		return keyPageDown
+	case sdl.K_HOME:
+		return keyHome
+	case sdl.K_END:
+		return keyEnd
+	case sdl.K_ESCAPE:
+		return keyEscape
+	case sdl.K_TAB:
+		return keyTab
+	case sdl.K_BACKSPACE:
+		return keyBackspace
+	case sdl.K_DELETE:
+		return keyDelete
+	case sdl.K_RETURN:
+		return keyReturn
+	case sdl.K_KP_ENTER:
+		return keyKpEnter
+	case sdl.K_LEFT:
+		return keyLeft
+	case sdl.K_RIGHT:
+		return keyRight
+	case sdl.K_LGUI:
+		return keyLcmd
+	case sdl.K_RGUI:
+		return keyRcmd
+	case sdl.K_SPACE:
+		return keySpace
+	case sdl.K_PERIOD:
+		return keyPeriod
+	case sdl.K_COMMA:
+		return keyComma
+	case sdl.K_MINUS:
+		return keyMinus
+	case sdl.K_EQUALS:
+		return keyEquals
+	case sdl.K_SLASH:
+		return keySlash
+	case sdl.K_q:
+		return keyQ
+	case sdl.K_b:
+		return keyB
+	case sdl.K_w:
+		return keyW
+	case sdl.K_f:
+		return keyF
+	case sdl.K_s:
+		return keyS
+	case sdl.K_r:
+		return keyR
+	case sdl.K_a:
+		return keyA
+	case sdl.K_e:
+		return keyE
+	case sdl.K_k:
+		return keyK
+	case sdl.K_u:
+		return keyU
+	case sdl.K_i:
+		return keyI
+	case sdl.K_o:
+		return keyO
+	case sdl.K_l:
+		return keyL
+	case sdl.K_c:
+		return keyC
+	case sdl.K_x:
+		return keyX
+	case sdl.K_v:
+		return keyV
+	case sdl.K_0:
+		return key0
+	case sdl.K_1:
+		return key1
+	case sdl.K_2:
+		return key2
+	case sdl.K_3:
+		return key3
+	case sdl.K_4:
+		return key4
+	case sdl.K_5:
+		return key5
+	case sdl.K_6:
+		return key6
+	case sdl.K_7:
+		return key7
+	case sdl.K_8:
+		return key8
+	case sdl.K_9:
+		return key9
+	case sdl.K_d:
+		return keyD
+	case sdl.K_g:
+		return keyG
+	case sdl.K_h:
+		return keyH
+	case sdl.K_j:
+		return keyJ
+	case sdl.K_m:
+		return keyM
+	case sdl.K_n:
+		return keyN
+	case sdl.K_p:
+		return keyP
+	case sdl.K_t:
+		return keyT
+	case sdl.K_y:
+		return keyY
+	case sdl.K_z:
+		return keyZ
+	default:
+		return keyUnknown
+	}
 }
 
 // ======================
@@ -2267,65 +1902,11 @@ func clamp(v, lo, hi int) int {
 func handleInputEvent(app *appState, ev sdl.Event) bool {
 	switch e := ev.(type) {
 	case *sdl.KeyboardEvent:
-		if e.Type != sdl.KEYDOWN || e.Repeat != 0 {
-			return true
-		}
-		switch e.Keysym.Sym {
-		case sdl.K_ESCAPE:
-			app.inputActive = false
-			app.inputValue = ""
-			app.inputPrompt = ""
-			app.inputKind = ""
-			app.lastEvent = "Input cancelled"
-			return true
-		case sdl.K_BACKSPACE:
-			if len(app.inputValue) > 0 {
-				rs := []rune(app.inputValue)
-				app.inputValue = string(rs[:len(rs)-1])
-			}
-			return true
-		case sdl.K_RETURN, sdl.K_KP_ENTER:
-			switch app.inputKind {
-			case "save":
-				name := strings.TrimSpace(app.inputValue)
-				if name == "" {
-					app.lastEvent = "SAVE ERR: filename required"
-					return true
-				}
-				path := name
-				if !filepath.IsAbs(path) {
-					root := app.openRoot
-					if root == "" {
-						if cwd, err := os.Getwd(); err == nil {
-							root = cwd
-						}
-					}
-					path = filepath.Join(root, name)
-				}
-				app.currentPath = path
-				if app.bufIdx >= 0 && app.bufIdx < len(app.buffers) {
-					app.buffers[app.bufIdx].path = path
-				}
-				app.inputActive = false
-				app.inputValue = ""
-				app.inputPrompt = ""
-				app.inputKind = ""
-				if err := saveCurrent(app); err != nil {
-					app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
-				} else {
-					app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
-				}
-			default:
-				app.inputActive = false
-			}
-			return true
-		}
+		return handleInputKey(app, sdlKeyEvent(e))
 	case *sdl.TextInputEvent:
 		text := textInputString(e)
-		if text != "" && utf8.ValidString(text) {
-			app.inputValue += text
-		}
+		return handleInputText(app, text)
+	default:
 		return true
 	}
-	return true
 }

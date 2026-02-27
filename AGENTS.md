@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 - Identity: the editor is called “gc” (from GoCat) and draws inspiration from the Canon Cat, Helix, acme, AMP, and Emacs; keep README and RULES aligned with that positioning.
 - `main.go` — SDL2/SDL2_ttf UI driver: window setup, event loop, rendering, and clipboard wiring. Depends on the headless editor package.
+- `input_core.go` — platform-agnostic input/controller layer (`keyEvent`, `modMask`, text/open/input handlers) that preserves editor behavior independent of SDL and is intended for alternate frontends (e.g., TUI).
 - `lsp_gopls.go` — minimal JSON-RPC client for `gopls` completion requests and snippet sanitization.
 - `editor/` — UI-free core: buffer management, leap/search, selection, clipboard abstraction, and helpers for line/column math.
 - `editor/editor_logic_test.go` — behaviour-focused tests that exercise the headless editor via a small fixture DSL.

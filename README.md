@@ -72,7 +72,8 @@ go build -o gc .
 ## Testing and Structure
 
 - Headless logic lives in `editor/` (no SDL dependency). Run unit tests with `go test ./editor`.
-- The SDL driver is in `main.go` and uses `editor.Editor` for all buffer/leap operations.
+- Platform-neutral input/controller logic lives in `input_core.go` (`keyEvent`, `modMask`, `handleKeyEvent`, `handleTextEvent`), so alternate frontends (for example a Go TUI) can reuse editing behavior without SDL event types.
+- The SDL driver in `main.go` is now an adapter: it translates SDL key/text events into controller events and handles window/render concerns.
 - Tests in `editor/editor_logic_test.go` use a small fixture helper (`run(t, buf, caret, func(*fixture))`) so new behaviour specs stay terse and UI-free. Shortcut/picker/end-to-end/latency/chaos tests live in `main_shortcuts_test.go`; file helpers and guards are in `main_open_test.go`. Optional GUI smoke/input tests live in `main_gui_test.go` behind the `gui` build tag; run with `SDL_VIDEODRIVER=dummy go test -tags gui ./...` when SDL2/SDL2_ttf and fonts are available.
 
 ## SDL UI Driver (`main.go`)
