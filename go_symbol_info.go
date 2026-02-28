@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"gc/editor"
@@ -34,6 +35,32 @@ var goKeywordInfo = map[string]string{
 	"var":         "declare mutable variables",
 }
 
+var goKeywordUsage = map[string]string{
+	"break":     "for { if done { break } }",
+	"case":      "switch x { case 1: }",
+	"chan":      "var ch chan int",
+	"const":     "const Pi = 3.14",
+	"continue":  "for i := range xs { if skip { continue } }",
+	"default":   "switch x { default: }",
+	"defer":     "defer f.Close()",
+	"else":      "if ok { ... } else { ... }",
+	"for":       "for i := 0; i < n; i++ { }",
+	"func":      "func add(a, b int) int { return a + b }",
+	"go":        "go worker(ch)",
+	"if":        "if err != nil { return err }",
+	"import":    "import \"fmt\"",
+	"interface": "type R interface { Read([]byte) (int, error) }",
+	"map":       "m := map[string]int{}",
+	"package":   "package main",
+	"range":     "for _, v := range xs { }",
+	"return":    "return value, nil",
+	"select":    "select { case v := <-ch: _ = v }",
+	"struct":    "type S struct { Name string }",
+	"switch":    "switch x { case 1: }",
+	"type":      "type ID string",
+	"var":       "var n int",
+}
+
 var goBuiltinInfo = map[string]string{
 	"append":  "append elements to slice",
 	"cap":     "capacity of array/slice/channel",
@@ -55,30 +82,76 @@ var goBuiltinInfo = map[string]string{
 	"recover": "recover from panic in deferred call",
 }
 
+var goBuiltinUsage = map[string]string{
+	"append":  "s = append(s, v)",
+	"cap":     "n := cap(s)",
+	"clear":   "clear(m)",
+	"close":   "close(ch)",
+	"complex": "z := complex(1, 2)",
+	"copy":    "n := copy(dst, src)",
+	"delete":  "delete(m, k)",
+	"imag":    "y := imag(z)",
+	"len":     "n := len(v)",
+	"make":    "ch := make(chan int, 1)",
+	"max":     "m := max(a, b)",
+	"min":     "m := min(a, b)",
+	"new":     "p := new(T)",
+	"panic":   "panic(\"bad state\")",
+	"print":   "print(v)",
+	"println": "println(v)",
+	"real":    "x := real(z)",
+	"recover": "if r := recover(); r != nil { }",
+}
+
 func showSymbolInfo(app *appState) string {
 	if app == nil || app.ed == nil {
 		return "No symbol info"
 	}
-	if detectSyntax(app.currentPath, string(app.ed.Buf)) != syntaxGo {
+	if bufferSyntaxKind(app, app.currentPath, app.ed.Buf) != syntaxGo {
 		return "Symbol info: Go mode only"
 	}
 	sym := symbolUnderCaret(app.ed.Buf, app.ed.Caret)
 	if sym == "" {
 		return "No symbol under cursor"
 	}
+	local, hasLocal := findLocalDefinition(app.ed.Buf, sym)
 	if info, ok := goKeywordInfo[sym]; ok {
-		return "Go keyword " + sym + ": " + info
+		out := "Go keyword " + sym + ": " + info
+		if usage, ok := goKeywordUsage[sym]; ok {
+			out += "\nUsage: " + usage
+		}
+		if hasLocal {
+			out += "\n" + local
+		}
+		return out
 	}
 	if info, ok := goBuiltinInfo[sym]; ok {
-		return "Go builtin " + sym + ": " + info
+		out := "Go builtin " + sym + ": " + info
+		if usage, ok := goBuiltinUsage[sym]; ok {
+			out += "\nUsage: " + usage
+		}
+		if hasLocal {
+			out += "\n" + local
+		}
+		return out
 	}
+	hover := ""
 	if !app.noGopls {
 		lines := editor.SplitLines(app.ed.Buf)
 		line := editor.CaretLineAt(lines, app.ed.Caret)
 		col := editor.CaretColAt(lines, app.ed.Caret)
-		if hover, err := app.gopls.hover(app.currentPath, string(app.ed.Buf), line, col); err == nil && strings.TrimSpace(hover) != "" {
-			return "Go symbol " + sym + ": " + singleLine(hover)
+		if h, err := app.gopls.hover(app.currentPath, string(app.ed.Buf), line, col); err == nil && strings.TrimSpace(h) != "" {
+			hover = "Go symbol " + sym + ": " + singleLine(h)
 		}
+	}
+	if hasLocal && hover != "" {
+		return local + "\n" + hover
+	}
+	if hasLocal {
+		return local
+	}
+	if hover != "" {
+		return hover
 	}
 	return "No info for symbol: " + sym
 }
@@ -122,4 +195,57 @@ func symbolUnderCaret(buf []rune, caret int) string {
 
 func isIdentRune(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
+}
+
+func findLocalDefinition(buf []rune, sym string) (string, bool) {
+	if strings.TrimSpace(sym) == "" {
+		return "", false
+	}
+	lines := editor.SplitLines(buf)
+	for i, line := range lines {
+		if kind, ok := lineDefinesSymbol(line, sym); ok {
+			return fmt.Sprintf("Local definition (line %d, %s): %s", i+1, kind, singleLine(strings.TrimSpace(line))), true
+		}
+	}
+	return "", false
+}
+
+func lineDefinesSymbol(line, sym string) (string, bool) {
+	t := strings.TrimSpace(line)
+	if t == "" || strings.HasPrefix(t, "//") {
+		return "", false
+	}
+	if after, ok := strings.CutPrefix(t, "func "); ok {
+		after := strings.TrimSpace(after)
+		if strings.HasPrefix(after, sym+"(") {
+			return "function", true
+		}
+		if strings.HasPrefix(after, "(") {
+			if _, after0, ok := strings.Cut(after, ")"); ok {
+				rest := strings.TrimSpace(after0)
+				if strings.HasPrefix(rest, sym+"(") {
+					return "method", true
+				}
+			}
+		}
+	}
+	if after, ok := strings.CutPrefix(t, "type "); ok {
+		rest := strings.TrimSpace(after)
+		if strings.HasPrefix(rest, sym+" ") || strings.HasPrefix(rest, sym+"=") {
+			return "type", true
+		}
+	}
+	if after, ok := strings.CutPrefix(t, "var "); ok {
+		rest := strings.TrimSpace(after)
+		if strings.HasPrefix(rest, sym+" ") || strings.HasPrefix(rest, sym+"=") || strings.HasPrefix(rest, sym+":=") {
+			return "var", true
+		}
+	}
+	if after, ok := strings.CutPrefix(t, "const "); ok {
+		rest := strings.TrimSpace(after)
+		if strings.HasPrefix(rest, sym+" ") || strings.HasPrefix(rest, sym+"=") {
+			return "const", true
+		}
+	}
+	return "", false
 }

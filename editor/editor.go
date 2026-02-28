@@ -3,8 +3,6 @@ package editor
 
 import "unicode"
 
-// Core editing and Leap logic. This package is UI-agnostic to keep logic testable.
-
 type Dir int
 
 const (
@@ -16,7 +14,7 @@ const (
 type Sel struct {
 	Active bool
 	A      int // inclusive
-	B      int // exclusive-ish in rendering; we normalise anyway
+	B      int // selection endpoint; Normalised handles ordering
 }
 
 func (s Sel) Normalised() (int, int) {
@@ -39,7 +37,7 @@ type LeapState struct {
 	HeldL bool
 	HeldR bool
 
-	// Selection while both Leap keys are involved
+	// Selection state while both leap trigger keys are active.
 	Selecting  bool
 	SelAnchor  int
 	LastSrc    string // "textinput" or "keydown"
@@ -93,19 +91,14 @@ func (e *Editor) LeapStart(dir Dir) {
 	e.Leap.LastFoundPos = -1
 	e.Leap.Selecting = false
 	e.Leap.LastSrc = ""
-	// Starting a leap does not clear an existing selection (Cat keeps it until you do something),
-	// but editing will replace it.
+	// Starting a leap keeps any existing selection; later edits may replace it.
 }
 
 func (e *Editor) LeapEndCommit() {
-	// Commit: keep caret where it is.
-	// Store query for Leap Again.
+	// Commit keeps caret and stores the query for Leap Again.
 	if len(e.Leap.Query) > 0 {
 		e.Leap.LastCommit = append(e.Leap.LastCommit[:0], e.Leap.Query...)
 	}
-
-	// If selecting, selection remains active (already tracked).
-	// If not selecting, we leave selection as-is.
 
 	e.Leap.Active = false
 	e.Leap.Query = e.Leap.Query[:0]

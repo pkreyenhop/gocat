@@ -51,11 +51,17 @@ func newGoHighlighter() *syntaxHighlighter {
 }
 
 func (h *syntaxHighlighter) lineStyleFor(path string, buf []rune, lines []string) map[int][]tokenStyle {
+	return h.lineStyleForSource(path, string(buf), lines)
+}
+
+func (h *syntaxHighlighter) lineStyleForSource(path, src string, lines []string) map[int][]tokenStyle {
+	return h.lineStyleForKind(path, src, lines, detectSyntax(path, src))
+}
+
+func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, kind syntaxKind) map[int][]tokenStyle {
 	if h == nil {
 		return nil
 	}
-	src := string(buf)
-	kind := detectSyntax(path, src)
 	if kind == syntaxNone {
 		h.lastPath = path
 		h.lastSource = src

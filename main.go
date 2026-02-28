@@ -1,10 +1,5 @@
 package main
 
-/*
-#include <stdlib.h>
-*/
-import "C"
-
 import (
 	"bufio"
 	"errors"
@@ -16,26 +11,12 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
-	"unsafe"
 
 	"gc/editor"
-
-	"github.com/veandco/go-sdl2/sdl"
-	"github.com/veandco/go-sdl2/ttf"
 )
 
 const Debug = false
 const tabWidth = 4
-
-type sdlClipboard struct{}
-
-func (sdlClipboard) GetText() (string, error) {
-	return sdl.GetClipboardText()
-}
-func (sdlClipboard) SetText(text string) error {
-	return sdl.SetClipboardText(text)
-}
 
 type bufferSlot struct {
 	ed   *editor.Editor
@@ -44,10 +25,21 @@ type bufferSlot struct {
 	picker     bool
 	pickerRoot string
 	dirty      bool
+	rev        int
+	mode       syntaxKind
+}
+
+type renderCache struct {
+	bufIdx     int
+	rev        int
+	path       string
+	lines      []string
+	lineStyles map[int][]tokenStyle
+	langMode   string
 }
 
 type appState struct {
-	ed               *editor.Editor // active buffer editor (mirrors buffers[bufIdx].ed)
+	ed               *editor.Editor
 	lastEvent        string
 	lastMods         modMask
 	blinkAt          time.Time
@@ -57,18 +49,12 @@ type appState struct {
 	inputPrompt      string
 	inputValue       string
 	inputKind        string
-	win              *sdl.Window
-	lastW            int
-	lastH            int
-	lastX            int32
-	lastY            int32
 	openRoot         string
 	open             openPrompt
 	buffers          []bufferSlot
 	bufIdx           int
-	currentPath      string // mirrors active buffer path for status messages
+	currentPath      string
 	scrollLine       int
-	showHelp         bool
 	symbolInfoPopup  string
 	symbolInfoScroll int
 	syntaxHL         *syntaxHighlighter
@@ -76,6 +62,11 @@ type appState struct {
 	gopls            *goplsClient
 	noGopls          bool
 	clipboard        editor.Clipboard
+	cmdPrefixActive  bool
+	suppressTextOnce bool
+	lessMode         bool
+	render           renderCache
+	startupFast      bool
 }
 
 type helpEntry struct {
@@ -83,11 +74,10 @@ type helpEntry struct {
 	keys   string
 }
 
-// helpEntries drives both the in-app help overlay/buffer and README sync (see main_help_test.go).
 var helpEntries = []helpEntry{
-	{"Leap forward / backward", "Hold Right Cmd / Left Cmd (type query)"},
-	{"Leap Again", "Ctrl+Right Cmd / Ctrl+Left Cmd"},
-	{"New buffer / cycle buffers", "Ctrl+B / Ctrl+Tab"},
+	{"Leap forward / backward", "Alt+F / Alt+B (type query)"},
+	{"Leap Again", "N/A in TUI mode"},
+	{"New buffer / cycle buffers", "Ctrl+B / Shift+Tab"},
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
 	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
 	{"Save + fmt/fix + reload", "Ctrl+F"},
@@ -100,9 +90,11 @@ var helpEntries = []helpEntry{
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
 	{"Symbol info under cursor (Go)", "Ctrl+I"},
+	{"Cycle language mode", "Esc+M"},
 	{"Autocomplete (Go mode)", "Tab"},
+	{"Less mode", "Esc+Space (Space page, Esc exit)"},
 	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
-	{"Escape", "Clear selection; close symbol popup; close picker or clean buffer"},
+	{"Escape", "Closes symbol info popup or exits less mode; otherwise command prefix (Esc then Esc closes current buffer)"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
 }
 
@@ -113,11 +105,12 @@ type openPrompt struct {
 }
 
 func (app *appState) initBuffers(ed *editor.Editor) {
-	app.buffers = []bufferSlot{{ed: ed}}
+	app.buffers = []bufferSlot{{ed: ed, rev: 1}}
 	app.bufIdx = 0
 	app.ed = ed
 	app.currentPath = ""
 	app.lastSpaceLn = -1
+	app.render = renderCache{}
 }
 
 func (app *appState) syncActiveBuffer() {
@@ -136,7 +129,7 @@ func (app *appState) syncActiveBuffer() {
 }
 
 func (app *appState) addBuffer() {
-	nb := bufferSlot{ed: editor.NewEditor("")}
+	nb := bufferSlot{ed: editor.NewEditor(""), rev: 1}
 	if app.clipboard != nil {
 		nb.ed.SetClipboard(app.clipboard)
 	}
@@ -150,6 +143,8 @@ func (app *appState) addPickerBuffer(lines []string) {
 		ed:         editor.NewEditor(strings.Join(lines, "\n")),
 		picker:     true,
 		pickerRoot: app.openRoot,
+		rev:        1,
+		mode:       syntaxNone,
 	}
 	if app.clipboard != nil {
 		nb.ed.SetClipboard(app.clipboard)
@@ -163,7 +158,19 @@ func (app *appState) markDirty() {
 	if app == nil || len(app.buffers) == 0 {
 		return
 	}
+	app.buffers[app.bufIdx].rev++
 	app.buffers[app.bufIdx].dirty = true
+}
+
+func (app *appState) touchBuffer(idx int) {
+	if app == nil || idx < 0 || idx >= len(app.buffers) {
+		return
+	}
+	app.buffers[idx].rev++
+}
+
+func (app *appState) touchActiveBuffer() {
+	app.touchBuffer(app.bufIdx)
 }
 
 func (app *appState) switchBuffer(delta int) {
@@ -175,175 +182,18 @@ func (app *appState) switchBuffer(delta int) {
 	app.syncActiveBuffer()
 }
 
-// closeBuffer removes the active buffer. It returns the number of buffers
-// remaining after the close.
 func (app *appState) closeBuffer() int {
 	if app == nil || len(app.buffers) == 0 {
 		return 0
 	}
-	// Remove active slot
 	app.buffers = append(app.buffers[:app.bufIdx], app.buffers[app.bufIdx+1:]...)
 	if app.bufIdx >= len(app.buffers) {
 		app.bufIdx = len(app.buffers) - 1
 	}
 	app.syncActiveBuffer()
-	// Closing a buffer cancels any open prompt.
 	app.open = openPrompt{}
 	return len(app.buffers)
 }
-
-func main() {
-	must(sdl.Init(sdl.INIT_VIDEO))
-	defer sdl.Quit()
-
-	must(ttf.Init())
-	defer ttf.Quit()
-
-	win := mustWindow(sdl.CreateWindow(
-		"RustCat Leap Prototype (B: repeat + selection)",
-		sdl.WINDOWPOS_CENTERED,
-		sdl.WINDOWPOS_CENTERED,
-		1200, 780,
-		sdl.WINDOW_SHOWN|sdl.WINDOW_RESIZABLE,
-	))
-	defer win.Destroy()
-	// Start in fullscreen to avoid platform window chrome handling (e.g., Cmd+M minimizing).
-	_ = win.SetFullscreen(sdl.WINDOW_FULLSCREEN_DESKTOP)
-
-	ren := mustRenderer(sdl.CreateRenderer(
-		win, -1,
-		sdl.RENDERER_ACCELERATED|sdl.RENDERER_PRESENTVSYNC,
-	))
-	defer ren.Destroy()
-
-	font := mustFont(ttf.OpenFont(pickFont(), 22))
-	defer font.Close()
-
-	ed := editor.NewEditor(
-		"",
-	)
-	clip := sdlClipboard{}
-	ed.SetClipboard(clip)
-
-	wW, wH := win.GetSize()
-	wX, wY := win.GetPosition()
-	root, _ := os.Getwd()
-	app := appState{
-		blinkAt:     time.Now(),
-		win:         win,
-		lastW:       int(wW),
-		lastH:       int(wH),
-		lastX:       wX,
-		lastY:       wY,
-		openRoot:    root,
-		syntaxHL:    newGoHighlighter(),
-		syntaxCheck: newGoSyntaxChecker(),
-		gopls:       newGoplsClient(),
-		clipboard:   clip,
-	}
-	app.initBuffers(ed)
-
-	// If filenames are provided on the command line, load them into buffers.
-	if len(os.Args) > 1 {
-		loadStartupFiles(&app, filterArgsToFiles(os.Args[1:]))
-	} else {
-		// Empty buffer when no file passed
-		app.ed.Buf = nil
-	}
-
-	sdl.StartTextInput()
-	defer sdl.StopTextInput()
-	defer app.gopls.close()
-
-	running := true
-	for running {
-		for ev := sdl.PollEvent(); ev != nil; ev = sdl.PollEvent() {
-			if !handleEvent(&app, ev) {
-				running = false
-				break
-			}
-		}
-
-		render(ren, win, font, &app)
-		time.Sleep(2 * time.Millisecond)
-	}
-}
-
-// handleEvent processes a single SDL event and mutates app/editor state.
-// It returns false when the app should quit.
-func handleEvent(app *appState, ev sdl.Event) bool {
-	if app.inputActive {
-		return handleInputEvent(app, ev)
-	}
-	if app.open.Active {
-		return handleOpenEvent(app, ev)
-	}
-	switch e := ev.(type) {
-	case *sdl.QuitEvent:
-		if app.ed != nil && app.ed.Leap.Active {
-			return true
-		}
-		return false
-	case *sdl.WindowEvent:
-		if (e.Event == sdl.WINDOWEVENT_MINIMIZED || e.Event == sdl.WINDOWEVENT_HIDDEN) && app.win != nil {
-			restoreWindow(app)
-		}
-		return true
-	case *sdl.KeyboardEvent:
-		return handleKeyEvent(app, sdlKeyEvent(e))
-	case *sdl.TextInputEvent:
-		return handleTextEvent(app, textInputString(e), sdlToMods(sdl.GetModState()))
-	default:
-		return true
-	}
-}
-
-func handleOpenEvent(app *appState, ev sdl.Event) bool {
-	switch e := ev.(type) {
-	case *sdl.KeyboardEvent:
-		return handleOpenKeyEvent(app, sdlKeyEvent(e))
-	case *sdl.TextInputEvent:
-		return handleOpenTextEvent(app, textInputString(e))
-	default:
-		return true
-	}
-}
-
-func restoreWindow(app *appState) {
-	if app.win == nil {
-		return
-	}
-	app.win.Restore()
-	app.win.Show()
-	if app.lastW > 0 && app.lastH > 0 {
-		app.win.SetSize(int32(app.lastW), int32(app.lastH))
-	}
-	if app.lastX != 0 || app.lastY != 0 {
-		app.win.SetPosition(app.lastX, app.lastY)
-	}
-	app.win.Raise()
-}
-
-func beginLeapGrab(app *appState) {
-	if app.win == nil {
-		return
-	}
-	app.win.SetKeyboardGrab(true)
-	app.win.SetAlwaysOnTop(true)
-	app.win.Raise()
-}
-
-func endLeapGrab(app *appState) {
-	if app.win == nil {
-		return
-	}
-	app.win.SetKeyboardGrab(false)
-	app.win.SetAlwaysOnTop(false)
-}
-
-// ======================
-// File helpers (very simple)
-// ======================
 
 func saveCurrent(app *appState) error {
 	if app == nil || app.ed == nil || len(app.buffers) == 0 {
@@ -366,6 +216,7 @@ func saveCurrent(app *appState) error {
 	}
 	app.buffers[app.bufIdx].path = path
 	app.buffers[app.bufIdx].dirty = false
+	app.touchActiveBuffer()
 	return nil
 }
 
@@ -437,6 +288,7 @@ func runCurrentPackage(app *appState) error {
 	}
 	title := fmt.Sprintf("[run] %s", filepath.Base(dir))
 	app.addBuffer()
+	runIdx := app.bufIdx
 	app.buffers[app.bufIdx].path = title
 	app.buffers[app.bufIdx].dirty = false
 	app.currentPath = title
@@ -444,9 +296,11 @@ func runCurrentPackage(app *appState) error {
 	runEd.Buf = []rune(fmt.Sprintf("$ (cd %s && go run .)\n\n", dir))
 	runEd.Caret = len(runEd.Buf)
 	runEd.Sel = editor.Sel{}
+	app.touchBuffer(runIdx)
 
 	appendOut := func(s string) {
 		appendRunOutput(runEd, s)
+		app.touchBuffer(runIdx)
 	}
 	onDone := func(err error) {
 		if err != nil {
@@ -509,7 +363,7 @@ func goFmtAndFix(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("no file path")
 	}
-	errs := make([]string, 0, 2)
+	errList := make([]string, 0, 2)
 
 	fmtCmd := exec.Command("gofmt", "-w", path)
 	if out, err := fmtCmd.CombinedOutput(); err != nil {
@@ -517,7 +371,7 @@ func goFmtAndFix(path string) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		errs = append(errs, "gofmt: "+msg)
+		errList = append(errList, "gofmt: "+msg)
 	}
 
 	fixCmd := exec.Command("go", "fix", path)
@@ -527,11 +381,11 @@ func goFmtAndFix(path string) error {
 		if msg == "" {
 			msg = err.Error()
 		}
-		errs = append(errs, "go fix: "+msg)
+		errList = append(errList, "go fix: "+msg)
 	}
 
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "; "))
+	if len(errList) > 0 {
+		return errors.New(strings.Join(errList, "; "))
 	}
 	return nil
 }
@@ -554,18 +408,8 @@ func reloadCurrentFromDisk(app *appState) error {
 	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
 	app.buffers[app.bufIdx].dirty = false
 	app.buffers[app.bufIdx].path = path
+	app.touchActiveBuffer()
 	return nil
-}
-
-func openCurrent(app *appState) error {
-	if app == nil || app.ed == nil || len(app.buffers) == 0 {
-		return fmt.Errorf("no editor to open into")
-	}
-	path := app.currentPath
-	if path == "" {
-		path = defaultPath(app)
-	}
-	return openPath(app, path)
 }
 
 func openPath(app *appState, path string) error {
@@ -576,7 +420,6 @@ func openPath(app *appState, path string) error {
 	if err != nil {
 		return err
 	}
-	// Only files under openRoot are allowed.
 	if app.openRoot != "" {
 		if rel, err := filepath.Rel(app.openRoot, path); err != nil || strings.HasPrefix(rel, "..") {
 			return fmt.Errorf("refusing to open outside %s", app.openRoot)
@@ -589,6 +432,7 @@ func openPath(app *appState, path string) error {
 	app.ed.Caret = 0
 	app.ed.Sel = editor.Sel{}
 	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
+	app.touchActiveBuffer()
 	return nil
 }
 
@@ -602,8 +446,6 @@ func defaultPath(app *appState) string {
 	return fmt.Sprintf("leap-%d.txt", app.bufIdx+1)
 }
 
-// loadFileAtCaret loads the file referenced by the current line in a picker buffer.
-// The picker buffer is reused for the opened file content.
 func loadFileAtCaret(app *appState) error {
 	if app == nil || app.ed == nil || len(app.buffers) == 0 {
 		return fmt.Errorf("no active buffer")
@@ -638,6 +480,7 @@ func loadFileAtCaret(app *appState) error {
 		app.openRoot = up
 		slot.pickerRoot = up
 		slot.ed.Buf = []rune(strings.Join(list, "\n"))
+		app.touchActiveBuffer()
 		app.currentPath = ""
 		app.ed = slot.ed
 		return nil
@@ -652,6 +495,7 @@ func loadFileAtCaret(app *appState) error {
 		app.openRoot = next
 		slot.pickerRoot = next
 		slot.ed.Buf = []rune(strings.Join(list, "\n"))
+		app.touchActiveBuffer()
 		app.currentPath = ""
 		app.ed = slot.ed
 		return nil
@@ -668,7 +512,6 @@ func loadFileAtCaret(app *appState) error {
 		}
 	}
 
-	// If already loaded, jump to that buffer.
 	for i, b := range app.buffers {
 		if filepath.Clean(b.path) == filepath.Clean(full) {
 			app.bufIdx = i
@@ -677,14 +520,11 @@ func loadFileAtCaret(app *appState) error {
 		}
 	}
 
-	// Otherwise, open in a new buffer and leave the picker intact.
 	app.addBuffer()
 	app.openRoot = filepath.Dir(full)
 	return openPath(app, full)
 }
 
-// findMatches searches for files under root whose basename contains query (case-insensitive).
-// It skips hidden directories and stops after limit hits.
 func findMatches(root, query string, limit int) []string {
 	if query == "" {
 		return nil
@@ -710,8 +550,7 @@ func findMatches(root, query string, limit int) []string {
 			}
 			return nil
 		}
-		base := strings.ToLower(d.Name())
-		if strings.Contains(base, lq) {
+		if strings.Contains(strings.ToLower(d.Name()), lq) {
 			matches = append(matches, path)
 		}
 		return nil
@@ -719,7 +558,6 @@ func findMatches(root, query string, limit int) []string {
 	return matches
 }
 
-// listFiles returns relative file paths under root (non-hidden/vendor), sorted.
 func listFiles(root string, limit int) ([]string, error) {
 	if root == "" {
 		return nil, fmt.Errorf("no root")
@@ -785,12 +623,10 @@ func pickerLines(root string, limit int) ([]string, error) {
 			entries = append(entries, name)
 		}
 	}
-	sort.Strings(entries[1:]) // keep ".." first
+	sort.Strings(entries[1:])
 	return entries, nil
 }
 
-// loadStartupFiles loads or creates files provided on the CLI into buffers and
-// updates openRoot per file. The last file becomes the active buffer.
 func loadStartupFiles(app *appState, args []string) {
 	if app == nil {
 		return
@@ -806,11 +642,11 @@ func loadStartupFiles(app *appState, args []string) {
 		}
 		app.openRoot = filepath.Dir(abs)
 		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
-			// Missing file: set up empty buffer with path so save can create it, but don't write yet.
 			app.currentPath = abs
 			app.buffers[app.bufIdx].path = abs
 			app.ed.Buf = nil
 			app.buffers[app.bufIdx].dirty = false
+			app.touchActiveBuffer()
 			app.lastEvent = fmt.Sprintf("Buffer for %s (file will be created on save)", abs)
 			continue
 		}
@@ -822,7 +658,6 @@ func loadStartupFiles(app *appState, args []string) {
 	}
 }
 
-// filterArgsToFiles keeps only regular files from CLI args, skipping directories/globs that expand to dirs.
 func filterArgsToFiles(args []string) []string {
 	out := make([]string, 0, len(args))
 	for _, a := range args {
@@ -834,7 +669,6 @@ func filterArgsToFiles(args []string) []string {
 			continue
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			// Keep missing files so they can be created at startup.
 			out = append(out, a)
 		}
 	}
@@ -912,7 +746,7 @@ func toggleComment(ed *editor.Editor) {
 	}
 
 	cum := make([]int, len(deltas)+1)
-	for i := 0; i < len(deltas); i++ {
+	for i := range deltas {
 		cum[i+1] = cum[i] + deltas[i]
 	}
 	adjustPos := func(oldPos int) int {
@@ -935,22 +769,6 @@ func toggleComment(ed *editor.Editor) {
 	ed.Caret = clamp(ed.Caret, 0, len(ed.Buf))
 }
 
-func drawHelp(r *sdl.Renderer, font *ttf.Font, x, y int, col sdl.Color) int {
-	lines := make([]string, 0, len(helpEntries))
-	for _, h := range helpEntries {
-		lines = append(lines, fmt.Sprintf("%s: %s", h.action, h.keys))
-	}
-	h := 0
-	lineH := font.Height() + 4
-	for i, l := range lines {
-		drawText(r, font, x, y+i*lineH, l, col)
-		h = y + i*lineH
-	}
-	return h + lineH
-}
-
-// ensureCaretVisible adjusts the scroll offset so the caret's line stays
-// within the visible viewport.
 func ensureCaretVisible(app *appState, caretLine, totalLines, visibleLines int) {
 	if app == nil {
 		return
@@ -981,363 +799,6 @@ func ensureCaretVisible(app *appState, caretLine, totalLines, visibleLines int) 
 	}
 }
 
-// ======================
-// Rendering
-// ======================
-
-func render(r *sdl.Renderer, win *sdl.Window, font *ttf.Font, app *appState) {
-	w32, h32 := win.GetSize()
-	w := int(w32)
-	h := int(h32)
-	if app != nil && app.win != nil {
-		x, y := win.GetPosition()
-		w, hh := win.GetSize()
-		app.lastX = x
-		app.lastY = y
-		app.lastW = int(w)
-		app.lastH = int(hh)
-	}
-
-	// Purple-leaning palette
-	bg := sdl.Color{R: 68, G: 39, B: 84, A: 255}    // #442754
-	fg := sdl.Color{R: 184, G: 169, B: 217, A: 255} // #B8A9D9
-	green := sdl.Color{R: 161, G: 181, B: 108, A: 255}
-	blue := sdl.Color{R: 124, G: 175, B: 194, A: 255}
-	selCol := sdl.Color{R: 70, G: 50, B: 90, A: 255}
-	caretCol := sdl.Color{R: 217, G: 217, B: 217, A: 255} // #D9D9D9
-	syntaxKeyword := sdl.Color{R: 199, G: 150, B: 255, A: 255}
-	syntaxType := sdl.Color{R: 132, G: 204, B: 246, A: 255}
-	syntaxFunc := sdl.Color{R: 250, G: 211, B: 120, A: 255}
-	syntaxString := sdl.Color{R: 186, G: 230, B: 126, A: 255}
-	syntaxNumber := sdl.Color{R: 255, G: 173, B: 134, A: 255}
-	syntaxComment := sdl.Color{R: 138, G: 157, B: 113, A: 255}
-	syntaxHeading := sdl.Color{R: 246, G: 193, B: 119, A: 255}
-	syntaxLink := sdl.Color{R: 128, G: 214, B: 230, A: 255}
-	syntaxPunctuation := sdl.Color{R: 187, G: 161, B: 221, A: 255}
-	syntaxErr := sdl.Color{R: 242, G: 118, B: 118, A: 255}
-
-	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
-	r.Clear()
-
-	// No active editor: draw empty screen and bail.
-	if app == nil || app.ed == nil {
-		drawText(r, font, 12, 12, "gc| no buffer open", fg)
-		r.Present()
-		return
-	}
-
-	cellW, _, _ := font.SizeUTF8("M")
-	lineH := font.Height() + 4
-	gutterW := 6 * cellW
-	left := 12 + gutterW
-	top := 12
-
-	// Blink caret: visible for 650ms, hidden for 350ms. Reset on input.
-	blinkOn := true
-	if app.blinkAt.IsZero() {
-		app.blinkAt = time.Now()
-	}
-	elapsedMs := time.Since(app.blinkAt).Milliseconds()
-	if elapsedMs%1000 >= 650 {
-		blinkOn = false
-	}
-
-	lines := editor.SplitLines(app.ed.Buf)
-	lineStyles := map[int][]tokenStyle(nil)
-	if app.syntaxHL != nil {
-		lineStyles = app.syntaxHL.lineStyleFor(app.currentPath, app.ed.Buf, lines)
-	}
-	lineErrs := map[int]struct{}(nil)
-	if app.syntaxCheck != nil {
-		lineErrs = app.syntaxCheck.lineErrorsFor(app.currentPath, app.ed.Buf)
-	}
-	bufStatus := bufferLabel(app)
-	curDir := app.openRoot
-	if curDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			curDir = cwd
-		}
-	}
-
-	// Build condensed status line
-	parts := []string{bufStatus}
-	parts = append(parts, fmt.Sprintf("lang=%s", bufferLanguageMode(app.currentPath, app.ed.Buf)))
-	if len(app.buffers) > 0 && app.buffers[app.bufIdx].dirty {
-		parts = append(parts, "*unsaved*")
-	}
-	if app.open.Active {
-		parts = append(parts, fmt.Sprintf("OPEN query=%q matches=%d", app.open.Query, len(app.open.Matches)))
-	} else if app.ed.Leap.Active {
-		dirArrow := "→"
-		if app.ed.Leap.Dir == editor.DirBack {
-			dirArrow = "←"
-		}
-		parts = append(parts, fmt.Sprintf("LEAP %s selecting=%v src=%s query=%q last=%q", dirArrow, app.ed.Leap.Selecting, app.ed.Leap.LastSrc, string(app.ed.Leap.Query), string(app.ed.Leap.LastCommit)))
-	} else {
-		parts = append(parts, fmt.Sprintf("EDIT last=%q", string(app.ed.Leap.LastCommit)))
-	}
-	if curDir != "" {
-		parts = append(parts, fmt.Sprintf("cwd=%s", curDir))
-	}
-	status := "gc| " + strings.Join(parts, " | ")
-	rightText := app.lastEvent
-
-	infoBarH := lineH + 8
-
-	// Text start
-	textTop := top
-	y := textTop
-
-	// Help overlay
-	if app.showHelp {
-		helpY := textTop
-		drawText(r, font, left, helpY-lineH, "Shortcuts", blue)
-		y = drawHelp(r, font, left, helpY, fg) + lineH
-	}
-
-	contentTop := y
-	usableHeight := h - contentTop - infoBarH*2 - 16
-	if usableHeight < lineH {
-		usableHeight = lineH
-	}
-	visibleLines := maxInt(1, (usableHeight+lineH-1)/lineH)
-	cLine := editor.CaretLineAt(lines, app.ed.Caret)
-	cCol := editor.CaretColAt(lines, app.ed.Caret)
-	ensureCaretVisible(app, cLine, len(lines), visibleLines)
-	startLine := clamp(app.scrollLine, 0, maxInt(0, len(lines)-visibleLines))
-	app.scrollLine = startLine
-	y = contentTop
-
-	// Gutter background
-	gutterX := left - gutterW
-	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
-	_ = r.FillRect(&sdl.Rect{X: int32(gutterX), Y: int32(contentTop), W: int32(gutterW - 6), H: int32(visibleLines * lineH)})
-
-	// Draw selection background (monospace-based)
-	if app.ed.Sel.Active {
-		a, b := app.ed.Sel.Normalised()
-		a = clamp(a, 0, len(app.ed.Buf))
-		b = clamp(b, 0, len(app.ed.Buf))
-		drawSelectionRects(r, lines, app.ed.Buf, a, b, left, contentTop, lineH, cellW, selCol, startLine, visibleLines, tabWidth)
-	}
-
-	drawn := 0
-	lnDim := sdl.Color{R: 130, G: 115, B: 160, A: 255}
-	lnBright := sdl.Color{R: 227, G: 207, B: 255, A: 255}
-	for i := startLine; i < len(lines) && drawn < visibleLines; i++ {
-		line := lines[i]
-		lnText := fmt.Sprintf("%4d ", i+1)
-		lnCol := lnDim
-		if i == cLine {
-			lnCol = lnBright
-			// Highlight current line background
-			r.SetDrawColor(selCol.R, selCol.G, selCol.B, selCol.A)
-			_ = r.FillRect(&sdl.Rect{X: int32(left - gutterW), Y: int32(y), W: int32(w - (left - gutterW)), H: int32(lineH)})
-		}
-		if _, ok := lineErrs[i]; ok {
-			r.SetDrawColor(syntaxErr.R, syntaxErr.G, syntaxErr.B, syntaxErr.A)
-			mw := max(4, cellW/3)
-			mh := max(4, lineH/3)
-			my := y + (lineH-mh)/2
-			_ = r.FillRect(&sdl.Rect{
-				X: int32(left - gutterW + 2),
-				Y: int32(my),
-				W: int32(mw),
-				H: int32(mh),
-			})
-		}
-		drawText(r, font, left-gutterW, y, lnText, lnCol)
-		drawStyledLine(
-			r,
-			font,
-			left,
-			y,
-			line,
-			lineStyles[i],
-			cellW,
-			fg,
-			syntaxKeyword,
-			syntaxType,
-			syntaxFunc,
-			syntaxString,
-			syntaxNumber,
-			syntaxComment,
-			syntaxHeading,
-			syntaxLink,
-			syntaxPunctuation,
-		)
-
-		if i == cLine && blinkOn {
-			cColVis := visualColForRuneCol(line, cCol, tabWidth)
-			x := left + cColVis*cellW
-			w := maxInt(2, min(cellW, lineH-2))
-			hh := lineH - 2
-			r.SetDrawColor(caretCol.R, caretCol.G, caretCol.B, caretCol.A)
-			_ = r.FillRect(&sdl.Rect{
-				X: int32(x),
-				Y: int32(y),
-				W: int32(w),
-				H: int32(hh),
-			})
-		}
-
-		y += lineH
-		drawn++
-	}
-
-	// underline found position while leaping
-	if app.ed.Leap.Active && app.ed.Leap.LastFoundPos >= 0 {
-		fLine := editor.CaretLineAt(lines, app.ed.Leap.LastFoundPos)
-		fCol := editor.CaretColAt(lines, app.ed.Leap.LastFoundPos)
-		rel := fLine - startLine
-		if rel >= 0 && rel < visibleLines {
-			yFound := contentTop + rel*lineH
-			x := left + visualColForRuneCol(lines[fLine], fCol, tabWidth)*cellW
-			yy := yFound + lineH - 3
-			r.SetDrawColor(green.R, green.G, green.B, green.A)
-			_ = r.DrawLine(int32(x), int32(yy), int32(x+cellW), int32(yy))
-		}
-	}
-
-	drawSymbolInfoPopup(r, font, app, w, h, infoBarH)
-
-	// Status bar above input line (inverted colors)
-	barY := h - infoBarH*2
-	barBg := sdl.Color{R: 35, G: 18, B: 43, A: 255}    // darker info bar
-	barFg := sdl.Color{R: 201, G: 182, B: 242, A: 255} // #C9B6F2
-	r.SetDrawColor(barBg.R, barBg.G, barBg.B, barBg.A)
-	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(barY), W: int32(w), H: int32(infoBarH)})
-	drawText(r, font, left, barY+4, status, barFg)
-	if rightText != "" {
-		if wtxt, _, err := font.SizeUTF8(rightText); err == nil {
-			rx := w - wtxt - left
-			if rx < left {
-				rx = left
-			}
-			drawText(r, font, rx, barY+4, rightText, barFg)
-		}
-	}
-
-	// Input line at very bottom
-	inputY := h - infoBarH
-	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
-	_ = r.FillRect(&sdl.Rect{X: 0, Y: int32(inputY), W: int32(w), H: int32(infoBarH)})
-	if app.inputActive {
-		drawText(r, font, left, inputY+4, fmt.Sprintf("%s%s", app.inputPrompt, app.inputValue), fg)
-	}
-
-	r.Present()
-}
-
-func drawSelectionRects(r *sdl.Renderer, lines []string, buf []rune, a, b int, left, y0, lineH, cellW int, col sdl.Color, startLine, visibleLines, tabW int) {
-	aLine, aCol := editor.LineColForPos(lines, a)
-	bLine, bCol := editor.LineColForPos(lines, b)
-
-	r.SetDrawColor(col.R, col.G, col.B, col.A)
-
-	visStart := startLine
-	visEnd := startLine + visibleLines - 1
-	for ln := aLine; ln <= bLine; ln++ {
-		if ln < visStart || ln > visEnd {
-			continue
-		}
-		y := y0 + (ln-startLine)*lineH
-		startCol := 0
-		endCol := visualLen(lines[ln], tabWidth)
-		if ln == aLine {
-			startCol = visualColForRuneCol(lines[ln], aCol, tabWidth)
-		}
-		if ln == bLine {
-			endCol = visualColForRuneCol(lines[ln], bCol, tabWidth)
-		}
-		if endCol < startCol {
-			startCol, endCol = endCol, startCol
-		}
-		x1 := left + startCol*cellW
-		x2 := left + endCol*cellW
-		_ = r.FillRect(&sdl.Rect{X: int32(x1), Y: int32(y), W: int32(maxInt(2, x2-x1)), H: int32(lineH)})
-	}
-
-	_ = buf // keep signature stable if you later want buffer-aware selection
-}
-
-func drawText(r *sdl.Renderer, font *ttf.Font, x, y int, text string, col sdl.Color) {
-	if text == "" {
-		return
-	}
-	surf, err := font.RenderUTF8Blended(text, col)
-	if err != nil {
-		return
-	}
-	defer surf.Free()
-
-	tex, err := r.CreateTextureFromSurface(surf)
-	if err != nil {
-		return
-	}
-	defer tex.Destroy()
-
-	dst := sdl.Rect{X: int32(x), Y: int32(y), W: surf.W, H: surf.H}
-	_ = r.Copy(tex, nil, &dst)
-}
-
-func drawSymbolInfoPopup(r *sdl.Renderer, font *ttf.Font, app *appState, winW, winH, infoBarH int) {
-	if app == nil || strings.TrimSpace(app.symbolInfoPopup) == "" {
-		return
-	}
-	text := app.symbolInfoPopup
-	const pad = 12
-	maxW := max(320, winW-80)
-	lines := wrapPopupText(text, 70)
-	if len(lines) == 0 {
-		lines = []string{text}
-	}
-	lineH := font.Height() + 4
-	maxH := winH - infoBarH*2 - 40
-	boxH := min(maxH, pad*2+lineH*14)
-	minH := pad*2 + lineH*3
-	if boxH < minH {
-		boxH = minH
-	}
-	boxW := maxW
-	x := (winW - boxW) / 2
-	y := max(20, (winH-infoBarH*2-boxH)/2)
-
-	bg := sdl.Color{R: 28, G: 14, B: 35, A: 245}
-	border := sdl.Color{R: 160, G: 126, B: 214, A: 255}
-	fg := sdl.Color{R: 228, G: 214, B: 255, A: 255}
-	dim := sdl.Color{R: 175, G: 154, B: 214, A: 255}
-
-	r.SetDrawColor(bg.R, bg.G, bg.B, bg.A)
-	_ = r.FillRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(boxW), H: int32(boxH)})
-	r.SetDrawColor(border.R, border.G, border.B, border.A)
-	_ = r.DrawRect(&sdl.Rect{X: int32(x), Y: int32(y), W: int32(boxW), H: int32(boxH)})
-
-	drawText(r, font, x+pad, y+pad, "Symbol Info", fg)
-
-	contentTop := y + pad + lineH
-	footerY := y + boxH - pad - lineH
-	contentHeight := max(lineH, footerY-contentTop)
-	visible := max(1, contentHeight/lineH)
-	maxScroll := max(0, len(lines)-visible)
-	app.symbolInfoScroll = clamp(app.symbolInfoScroll, 0, maxScroll)
-
-	start := app.symbolInfoScroll
-	end := min(len(lines), start+visible)
-	for i := start; i < end; i++ {
-		yy := contentTop + (i-start)*lineH
-		if yy+lineH > footerY {
-			break
-		}
-		drawText(r, font, x+pad, yy, lines[i], fg)
-	}
-	hint := "Esc close | Up/Down scroll"
-	if maxScroll > 0 {
-		hint = fmt.Sprintf("Esc close | Up/Down scroll (%d-%d/%d)", start+1, end, len(lines))
-	}
-	drawText(r, font, x+pad, footerY, hint, dim)
-}
-
 func wrapPopupText(text string, maxChars int) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -1365,7 +826,11 @@ func wrapPopupText(text string, maxChars int) []string {
 }
 
 func bufferLanguageMode(path string, buf []rune) string {
-	switch detectSyntax(path, string(buf)) {
+	return bufferLanguageModeFromSource(path, string(buf))
+}
+
+func syntaxKindLabel(kind syntaxKind) string {
+	switch kind {
 	case syntaxGo:
 		return "go"
 	case syntaxMarkdown:
@@ -1379,17 +844,53 @@ func bufferLanguageMode(path string, buf []rune) string {
 	}
 }
 
+func bufferLanguageModeFromSource(path, src string) string {
+	return syntaxKindLabel(detectSyntax(path, src))
+}
+
+func bufferSyntaxKind(app *appState, path string, buf []rune) syntaxKind {
+	if app != nil && app.bufIdx >= 0 && app.bufIdx < len(app.buffers) {
+		if forced := app.buffers[app.bufIdx].mode; forced != syntaxNone {
+			return forced
+		}
+	}
+	return detectSyntax(path, string(buf))
+}
+
+func cycleBufferMode(app *appState) string {
+	if app == nil || app.bufIdx < 0 || app.bufIdx >= len(app.buffers) {
+		return "text"
+	}
+	order := []syntaxKind{syntaxNone, syntaxGo, syntaxMarkdown, syntaxC, syntaxMiranda}
+	cur := app.buffers[app.bufIdx].mode
+	next := order[0]
+	for i, k := range order {
+		if k == cur {
+			next = order[(i+1)%len(order)]
+			break
+		}
+	}
+	app.buffers[app.bufIdx].mode = next
+	app.touchActiveBuffer()
+	return syntaxKindLabel(next)
+}
+
 func tryManualCompletion(app *appState) bool {
 	if app == nil || app.ed == nil || app.inputActive || app.open.Active || app.ed.Leap.Active {
 		return false
 	}
-	if detectSyntax(app.currentPath, string(app.ed.Buf)) != syntaxGo {
+	if bufferSyntaxKind(app, app.currentPath, app.ed.Buf) != syntaxGo {
 		return false
 	}
 	prefixStart := identPrefixStart(app.ed.Buf, app.ed.Caret)
 	prefix := string(app.ed.Buf[prefixStart:app.ed.Caret])
 	if len(prefix) < 1 {
 		return false
+	}
+	// Fast path: deterministic keyword expansion avoids the initial gopls round trip.
+	if kw, ok := goKeywordFallback(prefix); ok {
+		applyCompletionText(app, prefixStart, kw)
+		return true
 	}
 	lines := editor.SplitLines(app.ed.Buf)
 	line := editor.CaretLineAt(lines, app.ed.Caret)
@@ -1410,12 +911,6 @@ func tryManualCompletion(app *appState) bool {
 	item, ok := extremelySureCompletion(prefix, items, 1)
 	if ok {
 		applyCompletionText(app, prefixStart, item.Insert)
-		return true
-	}
-
-	// Fallback: deterministic keyword completion when there's exactly one match.
-	if kw, ok := goKeywordFallback(prefix); ok {
-		applyCompletionText(app, prefixStart, kw)
 		return true
 	}
 	return false
@@ -1445,7 +940,6 @@ func extremelySureCompletion(prefix string, items []completionItem, minPrefix in
 		return completionItem{}, false
 	}
 	if !strings.HasPrefix(insert, prefix) {
-		// For snippet/punctuation inserts, fallback to label if label is a strict prefix match.
 		if strings.HasPrefix(item.Label, prefix) && isSimpleIdent(item.Label) {
 			item.Insert = item.Label
 			return item, true
@@ -1495,136 +989,6 @@ func goKeywordFallback(prefix string) (string, bool) {
 	return match, true
 }
 
-func drawStyledLine(
-	r *sdl.Renderer,
-	font *ttf.Font,
-	x, y int,
-	line string,
-	lineStyle []tokenStyle,
-	cellW int,
-	fg sdl.Color,
-	keyword sdl.Color,
-	typ sdl.Color,
-	function sdl.Color,
-	str sdl.Color,
-	number sdl.Color,
-	comment sdl.Color,
-	heading sdl.Color,
-	link sdl.Color,
-	punctuation sdl.Color,
-) {
-	runes := []rune(line)
-	if len(runes) == 0 {
-		return
-	}
-	curStyle := styleDefault
-	curX := x
-	var sb strings.Builder
-	flush := func() {
-		if sb.Len() == 0 {
-			return
-		}
-		chunk := sb.String()
-		drawText(r, font, curX, y, chunk, styleColor(curStyle, fg, keyword, typ, function, str, number, comment, heading, link, punctuation))
-		curX += utf8.RuneCountInString(chunk) * cellW
-		sb.Reset()
-	}
-
-	visualCol := 0
-	for i, ru := range runes {
-		style := styleDefault
-		if i < len(lineStyle) {
-			style = lineStyle[i]
-		}
-		if i == 0 {
-			curStyle = style
-		}
-		if style != curStyle {
-			flush()
-			curStyle = style
-		}
-		if ru == '\t' {
-			nextTab := ((visualCol / tabWidth) + 1) * tabWidth
-			for visualCol < nextTab {
-				sb.WriteByte(' ')
-				visualCol++
-			}
-			continue
-		}
-		sb.WriteRune(ru)
-		visualCol++
-	}
-	flush()
-}
-
-func styleColor(
-	style tokenStyle,
-	fg sdl.Color,
-	keyword sdl.Color,
-	typ sdl.Color,
-	function sdl.Color,
-	str sdl.Color,
-	number sdl.Color,
-	comment sdl.Color,
-	heading sdl.Color,
-	link sdl.Color,
-	punctuation sdl.Color,
-) sdl.Color {
-	switch style {
-	case styleKeyword:
-		return keyword
-	case styleType:
-		return typ
-	case styleFunction:
-		return function
-	case styleString:
-		return str
-	case styleNumber:
-		return number
-	case styleComment:
-		return comment
-	case styleHeading:
-		return heading
-	case styleLink:
-		return link
-	case stylePunctuation:
-		return punctuation
-	default:
-		return fg
-	}
-}
-
-// ======================
-// Input helpers
-// ======================
-
-func textInputString(e *sdl.TextInputEvent) string {
-	return C.GoString((*C.char)(unsafe.Pointer(&e.Text[0])))
-}
-
-// expandTabs renders tabs as fixed-width spaces for UI display.
-func expandTabs(s string, width int) string {
-	if width <= 0 {
-		return s
-	}
-	var sb strings.Builder
-	col := 0
-	for _, r := range s {
-		if r == '\t' {
-			next := ((col / width) + 1) * width
-			for col < next {
-				sb.WriteByte(' ')
-				col++
-			}
-			continue
-		}
-		sb.WriteRune(r)
-		col++
-	}
-	return sb.String()
-}
-
-// visualColForRuneCol converts a rune column to a visual column accounting for tabs.
 func visualColForRuneCol(line string, runeCol, width int) int {
 	if width <= 0 {
 		return runeCol
@@ -1645,9 +1009,21 @@ func visualColForRuneCol(line string, runeCol, width int) int {
 	return vis
 }
 
-// visualLen returns the display width of a line with tabs expanded.
-func visualLen(line string, width int) int {
-	return visualColForRuneCol(line, len([]rune(line)), width)
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func modsString(m modMask) string {
@@ -1680,233 +1056,4 @@ func modsString(m modMask) string {
 		return "none"
 	}
 	return parts
-}
-
-func sdlToMods(m sdl.Keymod) modMask {
-	var out modMask
-	if (m & sdl.KMOD_SHIFT) != 0 {
-		out |= modShift
-	}
-	if (m & sdl.KMOD_CTRL) != 0 {
-		out |= modCtrl
-	}
-	if (m & sdl.KMOD_LGUI) != 0 {
-		out |= modLCmd
-	}
-	if (m & sdl.KMOD_RGUI) != 0 {
-		out |= modRCmd
-	}
-	if (m & sdl.KMOD_LALT) != 0 {
-		out |= modLAlt
-	}
-	if (m & sdl.KMOD_RALT) != 0 {
-		out |= modRAlt
-	}
-	return out
-}
-
-func sdlKeyEvent(e *sdl.KeyboardEvent) keyEvent {
-	if e == nil {
-		return keyEvent{}
-	}
-	return keyEvent{
-		down:   e.Type == sdl.KEYDOWN,
-		repeat: int(e.Repeat),
-		key:    sdlToKey(e.Keysym.Sym),
-		mods:   sdlToMods(sdl.GetModState()),
-	}
-}
-
-func sdlToKey(k sdl.Keycode) keyCode {
-	switch k {
-	case sdl.K_UP:
-		return keyUp
-	case sdl.K_DOWN:
-		return keyDown
-	case sdl.K_PAGEUP:
-		return keyPageUp
-	case sdl.K_PAGEDOWN:
-		return keyPageDown
-	case sdl.K_HOME:
-		return keyHome
-	case sdl.K_END:
-		return keyEnd
-	case sdl.K_ESCAPE:
-		return keyEscape
-	case sdl.K_TAB:
-		return keyTab
-	case sdl.K_BACKSPACE:
-		return keyBackspace
-	case sdl.K_DELETE:
-		return keyDelete
-	case sdl.K_RETURN:
-		return keyReturn
-	case sdl.K_KP_ENTER:
-		return keyKpEnter
-	case sdl.K_LEFT:
-		return keyLeft
-	case sdl.K_RIGHT:
-		return keyRight
-	case sdl.K_LGUI:
-		return keyLcmd
-	case sdl.K_RGUI:
-		return keyRcmd
-	case sdl.K_SPACE:
-		return keySpace
-	case sdl.K_PERIOD:
-		return keyPeriod
-	case sdl.K_COMMA:
-		return keyComma
-	case sdl.K_MINUS:
-		return keyMinus
-	case sdl.K_EQUALS:
-		return keyEquals
-	case sdl.K_SLASH:
-		return keySlash
-	case sdl.K_q:
-		return keyQ
-	case sdl.K_b:
-		return keyB
-	case sdl.K_w:
-		return keyW
-	case sdl.K_f:
-		return keyF
-	case sdl.K_s:
-		return keyS
-	case sdl.K_r:
-		return keyR
-	case sdl.K_a:
-		return keyA
-	case sdl.K_e:
-		return keyE
-	case sdl.K_k:
-		return keyK
-	case sdl.K_u:
-		return keyU
-	case sdl.K_i:
-		return keyI
-	case sdl.K_o:
-		return keyO
-	case sdl.K_l:
-		return keyL
-	case sdl.K_c:
-		return keyC
-	case sdl.K_x:
-		return keyX
-	case sdl.K_v:
-		return keyV
-	case sdl.K_0:
-		return key0
-	case sdl.K_1:
-		return key1
-	case sdl.K_2:
-		return key2
-	case sdl.K_3:
-		return key3
-	case sdl.K_4:
-		return key4
-	case sdl.K_5:
-		return key5
-	case sdl.K_6:
-		return key6
-	case sdl.K_7:
-		return key7
-	case sdl.K_8:
-		return key8
-	case sdl.K_9:
-		return key9
-	case sdl.K_d:
-		return keyD
-	case sdl.K_g:
-		return keyG
-	case sdl.K_h:
-		return keyH
-	case sdl.K_j:
-		return keyJ
-	case sdl.K_m:
-		return keyM
-	case sdl.K_n:
-		return keyN
-	case sdl.K_p:
-		return keyP
-	case sdl.K_t:
-		return keyT
-	case sdl.K_y:
-		return keyY
-	case sdl.K_z:
-		return keyZ
-	default:
-		return keyUnknown
-	}
-}
-
-// ======================
-// Fonts + util
-// ======================
-
-func pickFont() string {
-	local := filepath.Join("font", "JetBrainsMono-Regular.ttf")
-	if _, err := os.Stat(local); err == nil {
-		return local
-	}
-	panic("JetBrainsMono-Regular.ttf not found in ./font; ensure the font file is present")
-}
-
-func must(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-func mustWindow(w *sdl.Window, err error) *sdl.Window {
-	if err != nil {
-		panic(err)
-	}
-	return w
-}
-func mustRenderer(r *sdl.Renderer, err error) *sdl.Renderer {
-	if err != nil {
-		panic(err)
-	}
-	return r
-}
-func mustFont(f *ttf.Font, err error) *ttf.Font {
-	if err != nil {
-		panic(err)
-	}
-	return f
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-func handleInputEvent(app *appState, ev sdl.Event) bool {
-	switch e := ev.(type) {
-	case *sdl.KeyboardEvent:
-		return handleInputKey(app, sdlKeyEvent(e))
-	case *sdl.TextInputEvent:
-		text := textInputString(e)
-		return handleInputText(app, text)
-	default:
-		return true
-	}
 }

@@ -40,6 +40,8 @@ const (
 	keyKpEnter
 	keyLeft
 	keyRight
+	keyLctrl
+	keyRctrl
 	keyLcmd
 	keyRcmd
 	keySpace
@@ -98,6 +100,51 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	app.blinkAt = time.Now()
 	app.lastMods = e.mods
 
+	if e.down && e.repeat == 0 && e.key == keyEscape && strings.TrimSpace(app.symbolInfoPopup) != "" {
+		app.symbolInfoPopup = ""
+		app.symbolInfoScroll = 0
+		app.cmdPrefixActive = false
+		app.lastEvent = "Closed symbol info"
+		return true
+	}
+
+	if e.down && e.repeat == 0 && app.cmdPrefixActive {
+		app.cmdPrefixActive = false
+		app.suppressTextOnce = true
+		if e.key == keySpace {
+			app.lessMode = true
+			app.lastEvent = "Less mode: Space to page, Esc to exit"
+			return true
+		}
+		if e.key == keyEscape {
+			remaining := app.closeBuffer()
+			if remaining == 0 {
+				app.lastEvent = "Closed last buffer, quitting"
+				return false
+			}
+			app.lastEvent = fmt.Sprintf("Closed buffer, now %d/%d", app.bufIdx+1, remaining)
+			return true
+		}
+		e.mods |= modCtrl
+	}
+	if e.down && e.repeat == 0 && app.lessMode && e.key == keyEscape {
+		app.lessMode = false
+		app.lastEvent = "Less mode off"
+		return true
+	}
+	if e.down && e.repeat == 0 && app.lessMode && e.key == keySpace {
+		app.suppressTextOnce = true
+		lines := editor.SplitLines(ed.Buf)
+		ed.MoveCaretPage(lines, 20, editor.DirFwd, false)
+		app.lastEvent = "Less mode: paged"
+		return true
+	}
+	if e.down && e.repeat == 0 && e.key == keyEscape && !ed.Leap.Active {
+		app.cmdPrefixActive = true
+		app.lastEvent = "Command prefix: Esc + <key> (Esc closes buffer)"
+		return true
+	}
+
 	if e.down {
 		app.lastEvent = fmt.Sprintf("KEYDOWN key=%s repeat=%d mods=%s", keyName(e.key), e.repeat, modsString(e.mods))
 	} else {
@@ -130,46 +177,22 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 		}
 	}
 
-	if e.down && e.repeat == 0 && e.key == keyEscape && !ed.Leap.Active {
-		if app.symbolInfoPopup != "" {
-			app.symbolInfoPopup = ""
-			app.symbolInfoScroll = 0
-			return true
-		}
-		if ed.Sel.Active {
-			ed.Sel.Active = false
-			ed.Leap.Selecting = false
-			return true
-		}
-		if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
-			app.closeBuffer()
-			app.lastEvent = "Closed file picker"
-			return true
-		}
-		if len(app.buffers) > 0 && !app.buffers[app.bufIdx].dirty {
-			remaining := app.closeBuffer()
-			app.lastEvent = "Closed clean buffer"
-			if remaining == 0 {
-				return false
+	if e.down && e.repeat == 0 {
+		if e.key == keyTab && !ed.Leap.Active {
+			if (e.mods&modShift) != 0 && (e.mods&modCtrl) == 0 {
+				app.switchBuffer(-1)
+				app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
+				return true
+			}
+			if tryManualCompletion(app) {
+				app.lastEvent = "Completed"
 			}
 			return true
 		}
-		app.lastEvent = "Unsaved changes — press Ctrl+W to save or Ctrl+Q to close"
-		return true
-	}
 
-	if e.down && e.repeat == 0 {
 		ctrlHeld := (e.mods & modCtrl) != 0
 		if ctrlHeld {
 			switch e.key {
-			case keyTab:
-				delta := 1
-				if (e.mods & modShift) != 0 {
-					delta = -1
-				}
-				app.switchBuffer(delta)
-				app.lastEvent = fmt.Sprintf("Switched to buffer %d/%d", app.bufIdx+1, len(app.buffers))
-				return true
 			case keyQ:
 				if (e.mods & modShift) != 0 {
 					app.lastEvent = "Quit (discard all buffers)"
@@ -248,13 +271,23 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.markDirty()
 				return true
 			case keyI:
-				app.symbolInfoPopup = showSymbolInfo(app)
-				app.symbolInfoScroll = 0
+				if strings.TrimSpace(app.symbolInfoPopup) != "" {
+					app.symbolInfoPopup = ""
+					app.symbolInfoScroll = 0
+				} else {
+					app.symbolInfoPopup = showSymbolInfo(app)
+					app.symbolInfoScroll = 0
+				}
+				return true
+			case keyM:
+				mode := cycleBufferMode(app)
+				app.lastEvent = "Mode: " + mode
 				return true
 			case keySlash:
 				if (e.mods & modShift) != 0 {
 					app.addBuffer()
 					app.ed.Buf = []rune(helpText())
+					app.touchActiveBuffer()
 					app.currentPath = ""
 					app.buffers[app.bufIdx].path = ""
 					app.lastEvent = "Opened shortcuts buffer"
@@ -287,6 +320,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
 					app.buffers[app.bufIdx].pickerRoot = listRoot
 					app.buffers[app.bufIdx].ed.Buf = []rune(strings.Join(list, "\n"))
+					app.touchActiveBuffer()
 					app.ed = app.buffers[app.bufIdx].ed
 					app.currentPath = ""
 				} else {
@@ -321,12 +355,6 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.markDirty()
 				return true
 			}
-		}
-		if e.key == keyTab && !ed.Leap.Active {
-			if tryManualCompletion(app) {
-				app.lastEvent = "Completed"
-			}
-			return true
 		}
 	}
 
@@ -366,12 +394,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 		if !ctrlHeld {
 			if e.key == keyRcmd {
 				ed.LeapStart(editor.DirFwd)
-				beginLeapGrab(app)
 				return true
 			}
 			if e.key == keyLcmd {
 				ed.LeapStart(editor.DirBack)
-				beginLeapGrab(app)
 				return true
 			}
 		}
@@ -386,7 +412,6 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	if !e.down && ed.Leap.Active {
 		if !ed.Leap.HeldL && !ed.Leap.HeldR {
 			ed.LeapEndCommit()
-			endLeapGrab(app)
 			return true
 		}
 	}
@@ -395,14 +420,12 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 		switch e.key {
 		case keyEscape:
 			ed.LeapCancel()
-			endLeapGrab(app)
 			return true
 		case keyBackspace:
 			ed.LeapBackspace()
 			return true
 		case keyReturn, keyKpEnter:
 			ed.LeapEndCommit()
-			endLeapGrab(app)
 			return true
 		}
 
@@ -450,6 +473,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 }
 
 func handleTextEvent(app *appState, text string, mods modMask) bool {
+	if app.suppressTextOnce {
+		app.suppressTextOnce = false
+		return true
+	}
 	app.blinkAt = time.Now()
 	app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(mods))
 	if Debug {
@@ -471,14 +498,13 @@ func handleTextEvent(app *appState, text string, mods modMask) bool {
 	if text == " " {
 		lines := editor.SplitLines(ed.Buf)
 		lineIdx := editor.CaretLineAt(lines, ed.Caret)
-		col := editor.CaretColAt(lines, ed.Caret)
 		double := app.lastSpaceLn == lineIdx && time.Since(app.lastSpaceAt) < 2*time.Second
 		app.lastSpaceLn = lineIdx
 		app.lastSpaceAt = time.Now()
 		if double && ed.Caret > 0 && ed.Buf[ed.Caret-1] == ' ' {
 			ed.BackspaceOrDeleteSelection(true)
 			lines = editor.SplitLines(ed.Buf)
-			col = editor.CaretColAt(lines, ed.Caret)
+			col := editor.CaretColAt(lines, ed.Caret)
 			lineStart := max(ed.Caret-col, 0)
 			indentEnd := lineStart
 			for indentEnd < len(ed.Buf) && (ed.Buf[indentEnd] == '\t' || ed.Buf[indentEnd] == ' ') {

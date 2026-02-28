@@ -68,6 +68,39 @@ func TestBufferLanguageMode(t *testing.T) {
 	}
 }
 
+func TestSyntaxKindLabel(t *testing.T) {
+	tests := []struct {
+		kind syntaxKind
+		want string
+	}{
+		{kind: syntaxNone, want: "text"},
+		{kind: syntaxGo, want: "go"},
+		{kind: syntaxMarkdown, want: "markdown"},
+		{kind: syntaxC, want: "c"},
+		{kind: syntaxMiranda, want: "miranda"},
+	}
+	for _, tc := range tests {
+		if got := syntaxKindLabel(tc.kind); got != tc.want {
+			t.Fatalf("syntaxKindLabel(%v)=%q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestBufferSyntaxKindUsesForcedMode(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("plain text"))
+	app.currentPath = "note.txt"
+	app.buffers[0].path = "note.txt"
+
+	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Buf); got != syntaxNone {
+		t.Fatalf("default syntax kind=%v, want text/none", got)
+	}
+	app.buffers[0].mode = syntaxGo
+	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Buf); got != syntaxGo {
+		t.Fatalf("forced syntax kind=%v, want go", got)
+	}
+}
+
 func TestSyntaxHighlighterLineStyleForLanguages(t *testing.T) {
 	tests := []struct {
 		name string
@@ -155,6 +188,56 @@ func TestGoKeywordFallback(t *testing.T) {
 	}
 }
 
+func TestCycleBufferModeAndForcedGoCompletion(t *testing.T) {
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor("packa"))
+	app.currentPath = "untitled"
+	app.buffers[0].path = "untitled"
+	app.ed.Caret = len(app.ed.Buf)
+
+	if tryManualCompletion(&app) {
+		t.Fatalf("completion should be off in text mode")
+	}
+	if mode := cycleBufferMode(&app); mode != "go" {
+		t.Fatalf("mode=%q, want go", mode)
+	}
+	if !tryManualCompletion(&app) {
+		t.Fatalf("completion should work in forced go mode")
+	}
+	if got := string(app.ed.Buf); got != "package" {
+		t.Fatalf("buf=%q, want package", got)
+	}
+}
+
+func TestCycleBufferModeWrapsToText(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("x"))
+	order := []string{"go", "markdown", "c", "miranda", "text"}
+	for _, want := range order {
+		if got := cycleBufferMode(&app); got != want {
+			t.Fatalf("cycle mode=%q, want %q", got, want)
+		}
+	}
+}
+
+func TestForcedGoCompletionKeywordFastPathWithoutGopls(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("pack"))
+	app.currentPath = "untitled"
+	app.buffers[0].path = "untitled"
+	app.buffers[0].mode = syntaxGo
+	app.ed.Caret = len(app.ed.Buf)
+	app.noGopls = false
+	app.gopls = nil // would panic if tryManualCompletion reached gopls
+
+	if !tryManualCompletion(&app) {
+		t.Fatalf("expected keyword completion success")
+	}
+	if got := string(app.ed.Buf); got != "package" {
+		t.Fatalf("buf=%q, want package", got)
+	}
+}
+
 func TestGoSyntaxCheckerLineErrors(t *testing.T) {
 	c := newGoSyntaxChecker()
 
@@ -196,6 +279,8 @@ func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
 	app.ed.Caret = 2
 	if got := showSymbolInfo(&app); !strings.Contains(got, "Go keyword package") {
 		t.Fatalf("keyword info mismatch: %q", got)
+	} else if !strings.Contains(got, "Usage: package main") {
+		t.Fatalf("expected keyword usage example, got %q", got)
 	}
 
 	app2 := appState{noGopls: true}
@@ -204,6 +289,20 @@ func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
 	app2.ed.Caret = strings.Index(string(app2.ed.Buf), "len") + 1
 	if got := showSymbolInfo(&app2); !strings.Contains(got, "Go builtin len") {
 		t.Fatalf("builtin info mismatch: %q", got)
+	} else if !strings.Contains(got, "Usage: n := len(v)") {
+		t.Fatalf("expected builtin usage example, got %q", got)
+	}
+}
+
+func TestShowSymbolInfoFindsLocalDefinition(t *testing.T) {
+	src := "package main\n\nfunc helper(a int) int { return a + 1 }\n\nfunc main() { _ = helper(1) }\n"
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "a.go"
+	app.ed.Caret = strings.Index(src, "helper(1)") + 2
+	got := showSymbolInfo(&app)
+	if !strings.Contains(got, "Local definition") || !strings.Contains(got, "func helper(a int) int") {
+		t.Fatalf("expected local definition info, got %q", got)
 	}
 }
 

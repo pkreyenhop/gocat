@@ -21,13 +21,6 @@ type completionItem struct {
 	Detail string
 }
 
-type completionState struct {
-	Active      bool
-	Items       []completionItem
-	Selected    int
-	PrefixStart int
-}
-
 type lspCompletionItem struct {
 	Label            string `json:"label"`
 	InsertText       string `json:"insertText"`
