@@ -22,6 +22,10 @@ package main // import "."
 - `Esc+X` line-highlight mode: `x` extends highlighted lines; `Esc` exits.
 - `Esc+Space` less mode: `Space` pages forward; `Esc` exits.
 
+### Syntax Highlighting
+
+- Syntax highlighting is powered by pure-Go Tree-sitter (`github.com/odvcencio/gotreesitter`), with no CGO dependency.
+
 ## `gc/editor`
 
 ```text

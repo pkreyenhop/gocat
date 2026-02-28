@@ -8,7 +8,7 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 
 - **Leap quasimode**: Leap is currently unbound in TUI mode.
 - **Leap selection model**: Leap selection remains in the editor core, but leap trigger keys are currently unbound in the TUI.
-- **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); leap to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
+- **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); move the caret to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
 - **Save + format/fix/reload**: `Esc+F` saves the current file, runs `go fmt` and `go fix` for the file’s package directory, then reloads the file into the active buffer.
 - **Run package**: `Ctrl+R` invokes `go run .` in the active file’s directory and opens a new run-output buffer. The buffer starts with the command line, streams stdout/stderr (`[stderr]`-prefixed), and appends an `[exit]` status footer.
 - **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start. Passing a missing filename opens an empty buffer with that name; the file is created on first save.
@@ -22,7 +22,7 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 - **Go autocompletion**: In Go buffers, completion runs in a non-interruptive mode. Deterministic keyword completions run first (for example, `pack` -> `package`) and return immediately without waiting for `gopls`. Other completions auto-insert only when confidence is high (identifier prefix length at least 3, exactly one `gopls` candidate, identifier-only insert text), so there is no suggestion popup. If `gopls` is unavailable, completion is automatically disabled.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard.
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
-- **Rendering cues**: Purple palette; status line shows mode/query/buffer, `lang=<mode>`, and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined. Go buffers (`.go` or `package ...`), Markdown buffers (`.md`/`.markdown`), C buffers (`.c`/`.h`), and Miranda buffers (`.m`) use Tree-sitter token highlighting (Miranda currently uses the Haskell Tree-sitter grammar backend).
+- **Rendering cues**: Purple palette; status line shows mode/query/buffer, `lang=<mode>`, and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined. Go buffers (`.go` or `package ...`), Markdown buffers (`.md`/`.markdown`), C buffers (`.c`/`.h`), and Miranda buffers (`.m`) use a pure-Go Tree-sitter highlighter (`gotreesitter`) with no CGO dependency.
 - **Go syntax markers**: In Go mode, parse errors are checked with the Go parser, and lines with syntax errors get a red marker in the gutter.
 - **Go symbol info**: In Go mode, use `Esc` then `i` to toggle a symbol-info popup for the symbol under cursor (keyword/builtin details with usage examples, local definition lookup, and `gopls` hover fallback). Press `Esc` to close; use `Up/Down` (or `PageUp/PageDown`, `Home/End`) to scroll when needed.
 
@@ -33,7 +33,7 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 | Leap forward / backward | Unbound in TUI mode |
 | Leap Again | N/A in TUI mode |
 | New buffer / cycle buffers | Ctrl+B / Shift+Tab |
-| File picker / load line path | Ctrl+O / Ctrl+L (listing starts with `..`; current line filename opens new buffer or switches if already open) |
+| File picker / load line path | Ctrl+O / Ctrl+L (listing starts with `..`; current-line filename opens new buffer or switches if already open) |
 | Save current / save all | Ctrl+W / Esc+Shift+S |
 | Save + fmt/fix + reload | Esc+F |
 | Run package (go run .) | Ctrl+R |

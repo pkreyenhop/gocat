@@ -38,11 +38,11 @@
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
-  - Go buffers (`.go` path or first non-empty line starting with `package `) use Tree-sitter highlighting for comments, strings, numbers, keywords, type identifiers, and function identifiers.
+  - Go buffers (`.go` path or first non-empty line starting with `package `) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings, numbers, and keywords.
   - Go buffers run syntax checking via the Go parser; lines with parse errors show a red gutter marker.
-  - Markdown buffers (`.md`/`.markdown`) use Tree-sitter highlighting for headings, fenced/indented code blocks, links, list/quote/table punctuation, and thematic breaks.
-  - C buffers (`.c`/`.h`) use Tree-sitter highlighting for comments, strings/chars, numeric literals, C keywords, preprocessor directives, and type identifiers.
-  - Miranda buffers (`.m`) use Tree-sitter highlighting (currently via the Haskell grammar backend) for comments, strings/chars, numeric literals, declaration keywords, and type nodes.
+  - Markdown buffers (`.md`/`.markdown`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for headings and links.
+  - C buffers (`.c`/`.h`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings/chars, numeric literals, and C keywords.
+  - Miranda buffers (`.m`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings/chars, numeric literals, and declaration keywords.
   - Status bar (above input) shows buffer name, mode, detected language (`lang=<mode>`), cwd, `*unsaved*`, and last event. Input line at bottom handles prompts.
   - Gutter uses buffer background; line numbers dim except the current line, which is bright.
 

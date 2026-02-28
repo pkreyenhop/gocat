@@ -1,54 +1,36 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
-	sitter "github.com/smacker/go-tree-sitter"
-	sitterc "github.com/smacker/go-tree-sitter/c"
-	sittergo "github.com/smacker/go-tree-sitter/golang"
-	sittermd "github.com/smacker/go-tree-sitter/markdown/tree-sitter-markdown"
-	sitterhs "github.com/tree-sitter/tree-sitter-haskell/bindings/go"
+	treesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-type tokenStyle int
-
-const (
-	styleDefault tokenStyle = iota
-	styleKeyword
-	styleType
-	styleFunction
-	styleString
-	styleNumber
-	styleComment
-	styleHeading
-	styleLink
-	stylePunctuation
-)
-
-type syntaxKind int
-
-const (
-	syntaxNone syntaxKind = iota
-	syntaxGo
-	syntaxMarkdown
-	syntaxC
-	syntaxMiranda
-)
-
-type syntaxHighlighter struct {
-	lastPath   string
-	lastSource string
-	lastLines  int
-	lastKind   syntaxKind
-	lineStyles map[int][]tokenStyle
+type spanPriority struct {
+	style    tokenStyle
+	priority int
 }
 
-func newGoHighlighter() *syntaxHighlighter {
-	return &syntaxHighlighter{}
+type tsLanguageSpec struct {
+	kind         syntaxKind
+	lang         *treesitter.Language
+	query        string
+	tokenFactory func([]byte, *treesitter.Language) treesitter.TokenSource
+
+	once        sync.Once
+	highlighter *treesitter.Highlighter
+	initErr     error
 }
+
+var (
+	tsSpecsOnce sync.Once
+	tsSpecs     map[syntaxKind]*tsLanguageSpec
+)
 
 func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, kind syntaxKind) map[int][]tokenStyle {
 	if h == nil {
@@ -66,17 +48,9 @@ func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, k
 		return h.lineStyles
 	}
 
-	var lineStyles map[int][]tokenStyle
-	switch kind {
-	case syntaxGo:
-		lineStyles = buildLineStyles(src, lines, sittergo.GetLanguage(), classifyGoNode)
-	case syntaxMarkdown:
-		lineStyles = buildLineStyles(src, lines, sittermd.GetLanguage(), classifyMarkdownNode)
-	case syntaxC:
-		lineStyles = buildLineStyles(src, lines, sitterc.GetLanguage(), classifyCNode)
-	case syntaxMiranda:
-		lineStyles = buildLineStyles(src, lines, sitter.NewLanguage(sitterhs.Language()), classifyMirandaNode)
-	}
+	tsSpecsOnce.Do(initTreeSitterSpecs)
+	spec := tsSpecs[kind]
+	lineStyles := buildTreeSitterLineStyles(spec, src, lines)
 
 	h.lastPath = path
 	h.lastSource = src
@@ -86,45 +60,91 @@ func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, k
 	return lineStyles
 }
 
-func detectSyntax(path, src string) syntaxKind {
-	pathLower := strings.ToLower(path)
-	switch {
-	case strings.HasSuffix(pathLower, ".go"):
-		return syntaxGo
-	case strings.HasSuffix(pathLower, ".md"), strings.HasSuffix(pathLower, ".markdown"):
-		return syntaxMarkdown
-	case strings.HasSuffix(pathLower, ".c"), strings.HasSuffix(pathLower, ".h"):
-		return syntaxC
-	case strings.HasSuffix(pathLower, ".m"):
-		return syntaxMiranda
-	}
+func initTreeSitterSpecs() {
+	tsSpecs = map[syntaxKind]*tsLanguageSpec{}
 
-	for line := range strings.SplitSeq(src, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
+	goEntry := grammars.DetectLanguage("x.go")
+	cEntry := grammars.DetectLanguage("x.c")
+	mdEntry := grammars.DetectLanguage("x.md")
+	hsEntry := grammars.DetectLanguage("x.hs")
+
+	if goEntry != nil {
+		tsSpecs[syntaxGo] = &tsLanguageSpec{
+			kind:         syntaxGo,
+			lang:         goEntry.Language(),
+			query:        goEntry.HighlightQuery,
+			tokenFactory: goEntry.TokenSourceFactory,
 		}
-		if strings.HasPrefix(trimmed, "package ") {
-			return syntaxGo
-		}
-		if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") {
-			return syntaxMarkdown
-		}
-		return syntaxNone
 	}
-	return syntaxNone
+	if cEntry != nil {
+		tsSpecs[syntaxC] = &tsLanguageSpec{
+			kind:         syntaxC,
+			lang:         cEntry.Language(),
+			query:        cEntry.HighlightQuery,
+			tokenFactory: cEntry.TokenSourceFactory,
+		}
+	}
+	if mdEntry != nil {
+		query := strings.TrimSpace(mdEntry.HighlightQuery)
+		if query == "" {
+			query = markdownFallbackQuery
+		}
+		tsSpecs[syntaxMarkdown] = &tsLanguageSpec{
+			kind:         syntaxMarkdown,
+			lang:         mdEntry.Language(),
+			query:        query,
+			tokenFactory: mdEntry.TokenSourceFactory,
+		}
+	}
+	if hsEntry != nil {
+		tsSpecs[syntaxMiranda] = &tsLanguageSpec{
+			kind:         syntaxMiranda,
+			lang:         hsEntry.Language(),
+			query:        hsEntry.HighlightQuery,
+			tokenFactory: hsEntry.TokenSourceFactory,
+		}
+	}
 }
 
-type spanPriority struct {
-	style    tokenStyle
-	priority int
+func (s *tsLanguageSpec) highlighterForKind() (*treesitter.Highlighter, error) {
+	if s == nil || s.lang == nil {
+		return nil, fmt.Errorf("language unavailable")
+	}
+	s.once.Do(func() {
+		query := strings.TrimSpace(s.query)
+		if query == "" {
+			s.initErr = fmt.Errorf("highlight query unavailable")
+			return
+		}
+
+		opts := []treesitter.HighlighterOption{}
+		if s.tokenFactory != nil {
+			opts = append(opts, treesitter.WithTokenSourceFactory(func(source []byte) treesitter.TokenSource {
+				return s.tokenFactory(source, s.lang)
+			}))
+		}
+
+		hl, err := treesitter.NewHighlighter(s.lang, query, opts...)
+		if err != nil && s.kind == syntaxMarkdown {
+			hl, err = treesitter.NewHighlighter(s.lang, "(_) @punctuation", opts...)
+		}
+		s.highlighter = hl
+		s.initErr = err
+	})
+	return s.highlighter, s.initErr
 }
 
-type styleClassifier func(*sitter.Node, string) (tokenStyle, int)
+func buildTreeSitterLineStyles(spec *tsLanguageSpec, src string, lines []string) map[int][]tokenStyle {
+	if spec == nil || len(lines) == 0 {
+		return nil
+	}
+	hl, err := spec.highlighterForKind()
+	if err != nil || hl == nil {
+		return nil
+	}
 
-func buildLineStyles(src string, lines []string, lang *sitter.Language, classify styleClassifier) map[int][]tokenStyle {
-	root, err := sitter.ParseCtx(context.Background(), []byte(src), lang)
-	if err != nil || root == nil {
+	ranges := hl.Highlight([]byte(src))
+	if len(ranges) == 0 {
 		return nil
 	}
 
@@ -134,13 +154,13 @@ func buildLineStyles(src string, lines []string, lang *sitter.Language, classify
 	}
 
 	lineStartBytes := computeLineStartBytes(src, len(lines))
-	walkTreeLeaves(root, func(n *sitter.Node) {
-		style, pri := classify(n, src)
+	for _, r := range ranges {
+		style, pri := styleFromCapture(r.Capture)
 		if style == styleDefault {
-			return
+			continue
 		}
-		applyNodeStyle(styleGrid, lines, lineStartBytes, n.StartByte(), n.EndByte(), style, pri)
-	})
+		applyByteStyle(styleGrid, lines, lineStartBytes, int(r.StartByte), int(r.EndByte), style, pri)
+	}
 
 	out := make(map[int][]tokenStyle, len(lines))
 	for i, row := range styleGrid {
@@ -156,238 +176,36 @@ func buildLineStyles(src string, lines []string, lang *sitter.Language, classify
 			out[i] = styles
 		}
 	}
+	if len(out) == 0 {
+		return nil
+	}
 	return out
 }
 
-func walkTreeLeaves(node *sitter.Node, visit func(*sitter.Node)) {
-	if node == nil {
-		return
-	}
-	if node.ChildCount() == 0 {
-		visit(node)
-		return
-	}
-	for i := 0; i < int(node.ChildCount()); i++ {
-		walkTreeLeaves(node.Child(i), visit)
-	}
-}
-
-var goKeywordTokens = map[string]struct{}{
-	"break":       {},
-	"case":        {},
-	"chan":        {},
-	"const":       {},
-	"continue":    {},
-	"default":     {},
-	"defer":       {},
-	"else":        {},
-	"fallthrough": {},
-	"for":         {},
-	"func":        {},
-	"go":          {},
-	"goto":        {},
-	"if":          {},
-	"import":      {},
-	"interface":   {},
-	"map":         {},
-	"package":     {},
-	"range":       {},
-	"return":      {},
-	"select":      {},
-	"struct":      {},
-	"switch":      {},
-	"type":        {},
-	"var":         {},
-}
-
-var goPseudoKeywords = map[string]struct{}{
-	"nil":   {},
-	"true":  {},
-	"false": {},
-	"iota":  {},
-}
-
-func classifyGoNode(node *sitter.Node, src string) (tokenStyle, int) {
-	if node == nil {
-		return styleDefault, 0
-	}
-	typ := node.Type()
-	switch typ {
-	case "comment":
+func styleFromCapture(capture string) (tokenStyle, int) {
+	name := strings.ToLower(capture)
+	switch {
+	case strings.Contains(name, "comment"):
 		return styleComment, 90
-	case "interpreted_string_literal", "raw_string_literal", "rune_literal":
+	case strings.Contains(name, "string"), strings.Contains(name, "character"), strings.Contains(name, "escape"):
 		return styleString, 80
-	case "int_literal", "float_literal", "imaginary_literal":
+	case strings.Contains(name, "number"), strings.Contains(name, "float"), strings.Contains(name, "integer"):
 		return styleNumber, 70
-	case "type_identifier":
+	case strings.Contains(name, "function"), strings.Contains(name, "method"):
+		return styleFunction, 65
+	case strings.Contains(name, "type"), strings.Contains(name, "constructor"):
 		return styleType, 60
-	case "field_identifier":
-		if p := node.Parent(); p != nil && p.Type() == "method_declaration" {
-			return styleFunction, 60
-		}
-		return styleDefault, 0
-	case "identifier":
-		text := nodeText(src, node)
-		if _, ok := goPseudoKeywords[text]; ok {
-			return styleKeyword, 60
-		}
-		if p := node.Parent(); p != nil {
-			switch p.Type() {
-			case "function_declaration", "call_expression":
-				return styleFunction, 50
-			case "type_spec":
-				return styleType, 55
-			}
-		}
-		return styleDefault, 0
-	}
-	if !node.IsNamed() {
-		if _, ok := goKeywordTokens[typ]; ok {
-			return styleKeyword, 60
-		}
-	}
-	return styleDefault, 0
-}
-
-func classifyMarkdownNode(node *sitter.Node, _ string) (tokenStyle, int) {
-	if node == nil {
-		return styleDefault, 0
-	}
-	switch node.Type() {
-	case "atx_heading", "setext_heading", "atx_h1_marker", "atx_h2_marker", "atx_h3_marker", "atx_h4_marker", "atx_h5_marker", "atx_h6_marker", "setext_h1_underline", "setext_h2_underline":
+	case strings.Contains(name, "heading"), strings.Contains(name, "title"):
 		return styleHeading, 70
-	case "fenced_code_block", "code_fence_content", "fenced_code_block_delimiter", "indented_code_block", "info_string", "language":
-		return styleString, 80
-	case "link_label", "link_destination", "link_title", "link_reference_definition":
+	case strings.Contains(name, "link"), strings.Contains(name, "url"), strings.Contains(name, "uri"):
 		return styleLink, 70
-	case "thematic_break", "block_quote_marker", "list_marker_plus", "list_marker_minus", "list_marker_star", "list_marker_dot", "list_marker_parenthesis", "task_list_marker_checked", "task_list_marker_unchecked", "pipe_table_delimiter_row", "pipe_table_delimiter_cell":
-		return stylePunctuation, 60
-	case "html_block":
-		return styleComment, 50
+	case strings.Contains(name, "keyword"), strings.Contains(name, "conditional"), strings.Contains(name, "repeat"), strings.Contains(name, "exception"):
+		return styleKeyword, 60
+	case strings.Contains(name, "operator"), strings.Contains(name, "punctuation"), strings.Contains(name, "delimiter"), strings.Contains(name, "bracket"):
+		return stylePunctuation, 55
 	default:
 		return styleDefault, 0
 	}
-}
-
-var cKeywordTokens = map[string]struct{}{
-	"break":          {},
-	"case":           {},
-	"const":          {},
-	"continue":       {},
-	"default":        {},
-	"do":             {},
-	"else":           {},
-	"enum":           {},
-	"extern":         {},
-	"for":            {},
-	"goto":           {},
-	"if":             {},
-	"inline":         {},
-	"register":       {},
-	"restrict":       {},
-	"return":         {},
-	"sizeof":         {},
-	"static":         {},
-	"struct":         {},
-	"switch":         {},
-	"typedef":        {},
-	"union":          {},
-	"volatile":       {},
-	"while":          {},
-	"_Alignas":       {},
-	"_Alignof":       {},
-	"_Atomic":        {},
-	"_Bool":          {},
-	"_Complex":       {},
-	"_Generic":       {},
-	"_Imaginary":     {},
-	"_Noreturn":      {},
-	"_Static_assert": {},
-	"_Thread_local":  {},
-}
-
-func classifyCNode(node *sitter.Node, _ string) (tokenStyle, int) {
-	if node == nil {
-		return styleDefault, 0
-	}
-	switch node.Type() {
-	case "comment":
-		return styleComment, 90
-	case "string_literal", "char_literal":
-		return styleString, 80
-	case "number_literal":
-		return styleNumber, 70
-	case "type_identifier", "primitive_type", "sized_type_specifier", "macro_type_specifier":
-		return styleType, 65
-	case "preproc_include", "preproc_def", "preproc_function_def", "preproc_if", "preproc_ifdef", "preproc_else", "preproc_elif", "preproc_elifdef", "preproc_directive", "#include", "#define", "#if", "#ifdef", "#ifndef", "#else", "#elif", "#elifdef", "#elifndef":
-		return styleKeyword, 75
-	}
-	if !node.IsNamed() {
-		if _, ok := cKeywordTokens[node.Type()]; ok {
-			return styleKeyword, 60
-		}
-	}
-	return styleDefault, 0
-}
-
-var mirandaKeywordTokens = map[string]struct{}{
-	"let":      {},
-	"in":       {},
-	"if":       {},
-	"then":     {},
-	"else":     {},
-	"case":     {},
-	"of":       {},
-	"where":    {},
-	"module":   {},
-	"import":   {},
-	"type":     {},
-	"data":     {},
-	"newtype":  {},
-	"class":    {},
-	"instance": {},
-}
-
-func classifyMirandaNode(node *sitter.Node, _ string) (tokenStyle, int) {
-	if node == nil {
-		return styleDefault, 0
-	}
-	switch node.Type() {
-	case "comment":
-		return styleComment, 90
-	case "string", "char":
-		return styleString, 80
-	case "integer", "float":
-		return styleNumber, 70
-	case "type":
-		return styleType, 65
-	case "module", "import", "newtype", "class", "instance":
-		return styleKeyword, 70
-	}
-	if !node.IsNamed() {
-		if _, ok := mirandaKeywordTokens[node.Type()]; ok {
-			return styleKeyword, 60
-		}
-	}
-	return styleDefault, 0
-}
-
-func nodeText(src string, node *sitter.Node) string {
-	if node == nil {
-		return ""
-	}
-	a := int(node.StartByte())
-	b := int(node.EndByte())
-	if a < 0 {
-		a = 0
-	}
-	if b > len(src) {
-		b = len(src)
-	}
-	if a >= b {
-		return ""
-	}
-	return src[a:b]
 }
 
 func computeLineStartBytes(src string, lineCount int) []int {
@@ -407,20 +225,20 @@ func computeLineStartBytes(src string, lineCount int) []int {
 	return starts
 }
 
-func applyNodeStyle(
+func applyByteStyle(
 	styleGrid [][]spanPriority,
 	lines []string,
 	lineStarts []int,
-	startByte uint32,
-	endByte uint32,
+	startByte int,
+	endByte int,
 	style tokenStyle,
 	priority int,
 ) {
-	if len(styleGrid) == 0 || int(endByte) <= int(startByte) {
+	if len(styleGrid) == 0 || endByte <= startByte {
 		return
 	}
-	startLine, startColByte := byteOffsetToLineCol(lineStarts, int(startByte))
-	endLine, endColByte := byteOffsetToLineCol(lineStarts, int(endByte))
+	startLine, startColByte := byteOffsetToLineCol(lineStarts, startByte)
+	endLine, endColByte := byteOffsetToLineCol(lineStarts, endByte)
 	if startLine >= len(styleGrid) || endLine < 0 {
 		return
 	}
@@ -430,6 +248,7 @@ func applyNodeStyle(
 	if endLine >= len(styleGrid) {
 		endLine = len(styleGrid) - 1
 	}
+
 	for ln := startLine; ln <= endLine; ln++ {
 		if ln < 0 || ln >= len(lines) {
 			continue
@@ -450,13 +269,10 @@ func applyNodeStyle(
 		startColRune := utf8.RuneCountInString(line[:segStartByte])
 		endColRune := utf8.RuneCountInString(line[:segEndByte])
 		row := styleGrid[ln]
-		if startColRune < 0 {
-			startColRune = 0
-		}
 		if endColRune > len(row) {
 			endColRune = len(row)
 		}
-		for i := startColRune; i < endColRune; i++ {
+		for i := max(startColRune, 0); i < endColRune; i++ {
 			if priority >= row[i].priority {
 				row[i] = spanPriority{style: style, priority: priority}
 			}
@@ -482,3 +298,43 @@ func byteOffsetToLineCol(lineStarts []int, off int) (line int, col int) {
 	col = max(off-lineStarts[line], 0)
 	return line, col
 }
+
+const markdownFallbackQuery = `
+[
+  (atx_heading)
+  (setext_heading)
+  (atx_h1_marker)
+  (atx_h2_marker)
+  (atx_h3_marker)
+  (atx_h4_marker)
+  (atx_h5_marker)
+  (atx_h6_marker)
+] @heading
+
+[
+  (link_label)
+  (link_destination)
+  (link_title)
+  (link_reference_definition)
+] @link
+
+[
+  (fenced_code_block)
+  (code_fence_content)
+  (fenced_code_block_delimiter)
+  (indented_code_block)
+  (info_string)
+] @string
+
+[
+  (thematic_break)
+  (block_quote_marker)
+  (list_marker_plus)
+  (list_marker_minus)
+  (list_marker_star)
+  (list_marker_dot)
+  (list_marker_parenthesis)
+] @punctuation
+
+(html_block) @comment
+`
