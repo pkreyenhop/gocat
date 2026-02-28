@@ -3,19 +3,25 @@
 “gc” nods to GoCat and the editor draws inspiration from the Canon Cat, Helix, acme, AMP, and Emacs.
 
 - **Leap navigation**
-  - TUI frontend: `Alt+F` leap forward, `Alt+B` leap backward; queries are case-insensitive.
-  - Dual-Cmd selection and Cmd-based Leap Again are not mapped in TUI mode.
+  - Leap trigger keys are currently unbound in TUI mode.
+  - Leap selection/repeat behavior remains in editor core logic.
   - ESC exits Leap; outside Leap it closes symbol popup/exits less mode or acts as command prefix.
 
 - **Buffers & files**
   - `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers.
   - `Ctrl+O` opens a file-picker rooted at the current dir (skips dot/vendor); `..` goes up; directories end with `/` and open in-place; `Ctrl+L` loads the selected path (new buffer or switch if already loaded).
   - Startup loads multiple filenames (skips directories). Missing filenames open empty buffers and are created on first save.
-  - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Ctrl+Shift+S` saves only dirty buffers.
-  - `Ctrl+F` saves current file, runs `go fmt` and `go fix`, then reloads the file into the active buffer.
+  - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers.
+  - `Esc+F` saves current file, runs `go fmt` and `go fix`, then reloads the file into the active buffer.
   - `Ctrl+R` invokes `go run .` in the active file directory and opens a new run-output buffer with command header, streamed stdout/stderr (`[stderr]` prefix), and trailing `[exit]` status.
-  - `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits. `Esc` is a command prefix; `Esc` then `Esc` closes the current buffer, `Esc` then `Shift+Q` quits all, and `Esc` then `Shift+S` saves dirty buffers.
+  - `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits. `Esc` is a command prefix; `Esc` then `Esc` closes the current buffer, `Esc` then `Shift+Q` quits all, and `Esc` then `Shift+S` saves dirty buffers.
+  - If `Esc` is pending and no second key arrives quickly, a lower-right popup appears listing grouped `Esc` next-letter commands.
   - `Esc+M` cycles the active buffer language mode through `text -> go -> markdown -> c -> miranda -> text`.
+  - `Esc+/` starts incremental search. While entering pattern text, caret jumps to full matches. Typing `/` locks the pattern; then `Tab`/`Shift+Tab` move next/previous with wrap.
+  - In search mode, locking with `/` on an empty pattern redoes the last non-empty search and jumps to the next match.
+  - In locked search mode, `x` exits search and enters line-highlight mode; other keys exit search and execute their normal behavior.
+  - `Esc+X` starts line-highlight mode; repeated `x` extends selection by one line each time; `Esc` exits the mode.
+  - `Esc+Shift+Delete` clears the entire active buffer contents and marks it dirty.
 
 - **Editing & movement**
   - Text input inserts runes; Enter inserts newline; double-space inserts a tab at line start.
@@ -28,7 +34,7 @@
   - Clipboard: `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
   - Go autocompletion: in Go mode, `Tab` first applies deterministic Go keyword completion for unique prefix matches, then falls back to `gopls`; `gopls` completions auto-insert only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
   - If `gopls` is unavailable, `Tab` falls back to deterministic Go keyword completion when the current prefix has exactly one keyword match.
-  - In Go mode, `Ctrl+I` (or `Esc+i`) toggles a symbol-info popup for the symbol under cursor (keyword/builtin docs with usage examples, local definition lookup, and `gopls` hover fallback); `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long popup content.
+  - In Go mode, `Esc+i` toggles a symbol-info popup for the symbol under cursor (keyword/builtin docs with usage examples, local definition lookup, and `gopls` hover fallback); `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long popup content.
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
@@ -42,4 +48,4 @@
 
 - **Dirty tracking**
   - Editing actions mark buffers dirty; loading/saving clears dirty.
-  - `Ctrl+Shift+S` skips clean buffers; status shows `*unsaved*` when dirty.
+  - `Esc+Shift+S` skips clean buffers; status shows `*unsaved*` when dirty.

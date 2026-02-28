@@ -16,8 +16,6 @@ type modMask uint16
 const (
 	modShift modMask = 1 << iota
 	modCtrl
-	modLCmd
-	modRCmd
 	modLAlt
 	modRAlt
 )
@@ -42,8 +40,6 @@ const (
 	keyRight
 	keyLctrl
 	keyRctrl
-	keyLcmd
-	keyRcmd
 	keySpace
 	keyPeriod
 	keyComma
@@ -99,6 +95,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	ed := app.ed
 	app.blinkAt = time.Now()
 	app.lastMods = e.mods
+	prefixed := false
 
 	if e.down && e.repeat == 0 && e.key == keyEscape && strings.TrimSpace(app.symbolInfoPopup) != "" {
 		app.symbolInfoPopup = ""
@@ -110,7 +107,9 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 
 	if e.down && e.repeat == 0 && app.cmdPrefixActive {
 		app.cmdPrefixActive = false
-		app.suppressTextOnce = true
+		app.escHelpVisible = false
+		app.suppressTextOnce = prefixedCommandConsumesText(e.key, e.mods)
+		prefixed = true
 		if e.key == keySpace {
 			app.lessMode = true
 			app.lastEvent = "Less mode: Space to page, Esc to exit"
@@ -125,7 +124,69 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 			app.lastEvent = fmt.Sprintf("Closed buffer, now %d/%d", app.bufIdx+1, remaining)
 			return true
 		}
+		if e.key == keyX {
+			app.suppressTextOnce = false
+			startLineHighlightMode(app)
+			return true
+		}
+		if e.key == keySlash {
+			app.suppressTextOnce = false
+			startSearchMode(app)
+			return true
+		}
 		e.mods |= modCtrl
+	}
+	if e.down && e.repeat == 0 && app.searchActive {
+		matched := app.searchPatternDone && searchHasActiveMatch(app)
+		switch e.key {
+		case keyEscape:
+			exitSearchMode(app)
+			app.lastEvent = "Search mode off"
+			return true
+		case keyTab:
+			if (e.mods & modShift) != 0 {
+				searchPrevMatch(app)
+			} else {
+				searchNextMatch(app)
+			}
+			return true
+		case keyX:
+			if matched && (e.mods&(modCtrl|modLAlt|modRAlt|modShift)) == 0 {
+				exitSearchMode(app)
+				startLineHighlightMode(app)
+				return true
+			}
+		}
+		if matched {
+			exitSearchMode(app)
+			app.lastEvent = "Search mode off"
+		} else {
+			switch e.key {
+			case keyBackspace:
+				if len(app.searchQuery) > 0 {
+					app.searchQuery = app.searchQuery[:len(app.searchQuery)-1]
+					updateSearchMatch(app)
+				}
+				return true
+			case keyDelete:
+				// Without a locked match, Delete falls through to normal editor delete behavior.
+			case keyReturn, keyKpEnter:
+				exitSearchMode(app)
+				app.lastEvent = "Search committed"
+				return true
+			}
+		}
+	}
+	if e.down && e.repeat == 0 && app.lineHighlightMode {
+		if e.key == keyEscape {
+			app.lineHighlightMode = false
+			app.lastEvent = "Line highlight mode off"
+			return true
+		}
+		if e.key == keyX && e.mods == 0 {
+			extendLineHighlightMode(app, 1)
+			return true
+		}
 	}
 	if e.down && e.repeat == 0 && app.lessMode && e.key == keyEscape {
 		app.lessMode = false
@@ -141,6 +202,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	}
 	if e.down && e.repeat == 0 && e.key == keyEscape && !ed.Leap.Active {
 		app.cmdPrefixActive = true
+		app.escHelpVisible = false
+		app.escPrefixAt = time.Now()
+		app.escHelpToken++
+		scheduleEscHelp(app, app.escHelpToken)
 		app.lastEvent = "Command prefix: Esc + <key> (Esc closes buffer)"
 		return true
 	}
@@ -150,7 +215,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	} else {
 		app.lastEvent = fmt.Sprintf("KEYUP   key=%s mods=%s", keyName(e.key), modsString(e.mods))
 	}
-	if Debug {
+	if debug {
 		fmt.Println(app.lastEvent)
 	}
 
@@ -195,6 +260,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 			switch e.key {
 			case keyQ:
 				if (e.mods & modShift) != 0 {
+					if !prefixed {
+						app.lastEvent = "Use Esc+Shift+Q to quit all"
+						return true
+					}
 					app.lastEvent = "Quit (discard all buffers)"
 					return false
 				}
@@ -217,6 +286,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyF:
+				if !prefixed {
+					app.lastEvent = "Use Esc+F for format/fix/reload"
+					return true
+				}
 				if err := formatFixReloadCurrent(app); err != nil {
 					app.lastEvent = fmt.Sprintf("FMT/FIX ERR: %v", err)
 				} else {
@@ -225,6 +298,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				return true
 			case keyS:
 				if (e.mods & modShift) != 0 {
+					if !prefixed {
+						app.lastEvent = "Use Esc+Shift+S to save dirty buffers"
+						return true
+					}
 					if err := saveAll(app); err != nil {
 						app.lastEvent = fmt.Sprintf("SAVE ALL ERR: %v", err)
 					} else {
@@ -271,6 +348,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.markDirty()
 				return true
 			case keyI:
+				if !prefixed {
+					app.lastEvent = "Use Esc+I for symbol info"
+					return true
+				}
 				if strings.TrimSpace(app.symbolInfoPopup) != "" {
 					app.symbolInfoPopup = ""
 					app.symbolInfoScroll = 0
@@ -280,6 +361,10 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyM:
+				if !prefixed {
+					app.lastEvent = "Use Esc+M to cycle language mode"
+					return true
+				}
 				mode := cycleBufferMode(app)
 				app.lastEvent = "Mode: " + mode
 				return true
@@ -297,6 +382,16 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.lastEvent = "Toggled comment"
 				app.markDirty()
 				return true
+			case keyDelete:
+				if prefixed && (e.mods&modShift) != 0 {
+					ed.Buf = nil
+					ed.Caret = 0
+					ed.Sel = editor.Sel{}
+					ed.Leap = editor.LeapState{LastFoundPos: -1}
+					app.markDirty()
+					app.lastEvent = "Cleared buffer"
+					return true
+				}
 			case keyO:
 				listRoot := app.openRoot
 				if listRoot == "" {
@@ -358,64 +453,6 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 		}
 	}
 
-	if e.down && e.repeat == 0 && !ed.Leap.Active {
-		ctrlHeld := (e.mods & modCtrl) != 0
-		if ctrlHeld {
-			if e.key == keyRcmd {
-				ed.LeapAgain(editor.DirFwd)
-				return true
-			}
-			if e.key == keyLcmd {
-				ed.LeapAgain(editor.DirBack)
-				return true
-			}
-		}
-	}
-
-	if e.down && e.repeat == 0 {
-		if e.key == keyLcmd {
-			ed.Leap.HeldL = true
-		}
-		if e.key == keyRcmd {
-			ed.Leap.HeldR = true
-		}
-	}
-	if !e.down {
-		if e.key == keyLcmd {
-			ed.Leap.HeldL = false
-		}
-		if e.key == keyRcmd {
-			ed.Leap.HeldR = false
-		}
-	}
-
-	if e.down && e.repeat == 0 && !ed.Leap.Active {
-		ctrlHeld := (e.mods & modCtrl) != 0
-		if !ctrlHeld {
-			if e.key == keyRcmd {
-				ed.LeapStart(editor.DirFwd)
-				return true
-			}
-			if e.key == keyLcmd {
-				ed.LeapStart(editor.DirBack)
-				return true
-			}
-		}
-	}
-
-	if ed.Leap.Active && e.down && e.repeat == 0 {
-		if (e.key == keyLcmd && ed.Leap.HeldR) || (e.key == keyRcmd && ed.Leap.HeldL) {
-			ed.BeginLeapSelection()
-		}
-	}
-
-	if !e.down && ed.Leap.Active {
-		if !ed.Leap.HeldL && !ed.Leap.HeldR {
-			ed.LeapEndCommit()
-			return true
-		}
-	}
-
 	if ed.Leap.Active && e.down && e.repeat == 0 {
 		switch e.key {
 		case keyEscape:
@@ -447,17 +484,29 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				if ed.DeleteLineAtCaret() {
 					app.markDirty()
 				}
-			} else if ed.DeleteWordAtCaret() {
-				app.markDirty()
+			} else {
+				// Delete intentionally ignores active selection and targets the word at caret.
+				ed.Sel.Active = false
+				if ed.DeleteWordAtCaret() {
+					app.markDirty()
+				}
 			}
 		case keyLeft:
 			ed.MoveCaret(-1, (e.mods&modShift) != 0)
 		case keyRight:
 			ed.MoveCaret(1, (e.mods&modShift) != 0)
 		case keyUp:
-			ed.MoveCaretLine(lines, -1, (e.mods&modShift) != 0)
+			if (e.mods & modShift) != 0 {
+				ed.MoveCaretLineByLine(lines, -1)
+			} else {
+				ed.MoveCaretLine(lines, -1, false)
+			}
 		case keyDown:
-			ed.MoveCaretLine(lines, 1, (e.mods&modShift) != 0)
+			if (e.mods & modShift) != 0 {
+				ed.MoveCaretLineByLine(lines, 1)
+			} else {
+				ed.MoveCaretLine(lines, 1, false)
+			}
 		case keyPageDown:
 			ed.MoveCaretPage(lines, 20, editor.DirFwd, (e.mods&modShift) != 0)
 		case keyPageUp:
@@ -479,12 +528,48 @@ func handleTextEvent(app *appState, text string, mods modMask) bool {
 	}
 	app.blinkAt = time.Now()
 	app.lastEvent = fmt.Sprintf("TEXTINPUT %q mods=%s", text, modsString(mods))
-	if Debug {
+	if debug {
 		fmt.Println(app.lastEvent)
 	}
 
 	if text == "" || !utf8.ValidString(text) {
 		return true
+	}
+	if app.searchActive {
+		if !app.searchPatternDone {
+			if text == "/" {
+				if len(app.searchQuery) == 0 && len(app.lastSearchQuery) > 0 {
+					app.searchQuery = append(app.searchQuery[:0], app.lastSearchQuery...)
+					app.searchPatternDone = true
+					searchNextMatch(app)
+					return true
+				}
+				app.searchPatternDone = true
+				if len(app.searchQuery) > 0 {
+					app.lastSearchQuery = append(app.lastSearchQuery[:0], app.searchQuery...)
+				}
+				app.lastEvent = fmt.Sprintf("Search locked: %q", string(app.searchQuery))
+				return true
+			}
+			app.searchQuery = append(app.searchQuery, []rune(text)...)
+			updateSearchMatch(app)
+			return true
+		}
+		if searchHasActiveMatch(app) {
+			if text == "x" || text == "X" {
+				exitSearchMode(app)
+				startLineHighlightMode(app)
+				return true
+			}
+			exitSearchMode(app)
+		}
+	}
+	if app.lineHighlightMode {
+		if text == "x" || text == "X" {
+			extendLineHighlightMode(app, 1)
+			return true
+		}
+		app.lineHighlightMode = false
 	}
 	if text == "\t" {
 		return true
@@ -521,6 +606,173 @@ func handleTextEvent(app *appState, text string, mods modMask) bool {
 	ed.InsertText(text)
 	app.markDirty()
 	return true
+}
+
+func searchHasActiveMatch(app *appState) bool {
+	if app == nil || !app.searchActive {
+		return false
+	}
+	return len(app.searchQuery) > 0 && app.searchLastMatch >= 0
+}
+
+func exitSearchMode(app *appState) {
+	if app == nil {
+		return
+	}
+	app.searchActive = false
+	app.searchQuery = app.searchQuery[:0]
+	app.searchPatternDone = false
+	app.searchLastMatch = -1
+	if app.ed != nil {
+		app.ed.Sel.Active = false
+	}
+}
+
+func startSearchMode(app *appState) {
+	if app == nil || app.ed == nil {
+		return
+	}
+	app.searchActive = true
+	app.searchQuery = app.searchQuery[:0]
+	app.searchPatternDone = false
+	app.searchOrigin = app.ed.Caret
+	app.searchLastMatch = -1
+	app.lastEvent = "Search mode: type pattern, '/' locks, Tab next, Esc exit"
+}
+
+func updateSearchMatch(app *appState) {
+	if app == nil || app.ed == nil {
+		return
+	}
+	if len(app.searchQuery) == 0 {
+		app.searchLastMatch = -1
+		app.ed.Caret = app.searchOrigin
+		app.ed.Sel.Active = false
+		app.lastEvent = "Search: empty"
+		return
+	}
+	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, app.searchOrigin, editor.DirFwd, true)
+	if !ok {
+		app.searchLastMatch = -1
+		app.ed.Sel.Active = false
+		app.lastEvent = fmt.Sprintf("Search: no match for %q", string(app.searchQuery))
+		return
+	}
+	applySearchMatch(app, pos)
+	app.lastEvent = fmt.Sprintf("Search: %q", string(app.searchQuery))
+}
+
+func searchNextMatch(app *appState) {
+	if app == nil || app.ed == nil || len(app.searchQuery) == 0 {
+		return
+	}
+	app.lastSearchQuery = append(app.lastSearchQuery[:0], app.searchQuery...)
+	start := min(len(app.ed.Buf), app.ed.Caret+1)
+	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, start, editor.DirFwd, true)
+	if !ok {
+		app.searchLastMatch = -1
+		app.ed.Sel.Active = false
+		app.lastEvent = fmt.Sprintf("Search: no match for %q", string(app.searchQuery))
+		return
+	}
+	applySearchMatch(app, pos)
+	app.lastEvent = fmt.Sprintf("Search next: %q", string(app.searchQuery))
+}
+
+func searchPrevMatch(app *appState) {
+	if app == nil || app.ed == nil || len(app.searchQuery) == 0 {
+		return
+	}
+	app.lastSearchQuery = append(app.lastSearchQuery[:0], app.searchQuery...)
+	start := max(0, app.ed.Caret-1)
+	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, start, editor.DirBack, true)
+	if !ok {
+		app.searchLastMatch = -1
+		app.ed.Sel.Active = false
+		app.lastEvent = fmt.Sprintf("Search: no match for %q", string(app.searchQuery))
+		return
+	}
+	applySearchMatch(app, pos)
+	app.lastEvent = fmt.Sprintf("Search prev: %q", string(app.searchQuery))
+}
+
+func applySearchMatch(app *appState, pos int) {
+	if app == nil || app.ed == nil {
+		return
+	}
+	app.searchLastMatch = pos
+	app.ed.Caret = pos
+	end := min(len(app.ed.Buf), pos+len(app.searchQuery))
+	app.ed.Sel.Active = true
+	app.ed.Sel.A = pos
+	app.ed.Sel.B = end
+}
+
+func startLineHighlightMode(app *appState) {
+	if app == nil || app.ed == nil {
+		return
+	}
+	lines := editor.SplitLines(app.ed.Buf)
+	if len(lines) == 0 {
+		return
+	}
+	curLine, _ := editor.LineColForPos(lines, app.ed.Caret)
+	app.lineHighlightMode = true
+	app.lineHighlightAnchorLine = curLine
+	app.lineHighlightToLine = curLine
+	applyLineHighlightSelection(app, lines)
+	app.lastEvent = "Line highlight mode: x extends by row, Esc exits"
+}
+
+func extendLineHighlightMode(app *appState, delta int) {
+	if app == nil || app.ed == nil {
+		return
+	}
+	lines := editor.SplitLines(app.ed.Buf)
+	if len(lines) == 0 {
+		return
+	}
+	if !app.lineHighlightMode {
+		startLineHighlightMode(app)
+		return
+	}
+	app.lineHighlightToLine = clamp(app.lineHighlightToLine+delta, 0, len(lines)-1)
+	applyLineHighlightSelection(app, lines)
+}
+
+func applyLineHighlightSelection(app *appState, lines []string) {
+	if app == nil || app.ed == nil || len(lines) == 0 {
+		return
+	}
+	from := min(app.lineHighlightAnchorLine, app.lineHighlightToLine)
+	to := max(app.lineHighlightAnchorLine, app.lineHighlightToLine)
+	selA := lineStartForSelection(lines, from)
+	selB := lineEndExclusiveForSelection(lines, to, len(app.ed.Buf))
+	app.ed.Sel.Active = true
+	app.ed.Sel.A = selA
+	app.ed.Sel.B = selB
+	app.ed.Caret = lineStartForSelection(lines, app.lineHighlightToLine)
+}
+
+func lineStartForSelection(lines []string, lineIdx int) int {
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineIdx >= len(lines) {
+		lineIdx = len(lines) - 1
+	}
+	pos := 0
+	for i := 0; i < lineIdx; i++ {
+		pos += len([]rune(lines[i])) + 1
+	}
+	return pos
+}
+
+func lineEndExclusiveForSelection(lines []string, lineIdx int, bufLen int) int {
+	if lineIdx >= len(lines)-1 {
+		return bufLen
+	}
+	return lineStartForSelection(lines, lineIdx+1)
 }
 
 func handleOpenKeyEvent(app *appState, e keyEvent) bool {
@@ -631,6 +883,29 @@ func handleInputText(app *appState, text string) bool {
 		app.inputValue += text
 	}
 	return true
+}
+
+func prefixedCommandConsumesText(k keyCode, mods modMask) bool {
+	if (mods & (modCtrl | modLAlt | modRAlt)) != 0 {
+		return false
+	}
+	_, ok := keyToRune(k, mods)
+	return ok
+}
+
+func scheduleEscHelp(app *appState, token int) {
+	if app == nil || app.requestInterrupt == nil {
+		return
+	}
+	delay := app.escHelpDelay
+	if delay <= 0 {
+		delay = 700 * time.Millisecond
+	}
+	post := app.requestInterrupt
+	// Use an interrupt so the UI thread can decide whether Esc is still pending.
+	time.AfterFunc(delay, func() {
+		post(token)
+	})
 }
 
 func keyToRune(k keyCode, mods modMask) (rune, bool) {
@@ -847,10 +1122,6 @@ func keyName(k keyCode) string {
 		return "Left"
 	case keyRight:
 		return "Right"
-	case keyLcmd:
-		return "LCmd"
-	case keyRcmd:
-		return "RCmd"
 	case keySlash:
 		return "Slash"
 	case keyComma:

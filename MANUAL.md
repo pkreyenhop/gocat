@@ -17,7 +17,7 @@ go build -o gc .
 
 ## Navigation & Selection
 
-- **Leap (case-insensitive):** Press `Alt+F` to leap forward or `Alt+B` to leap backward, then type query text. Press Enter to commit or Esc to cancel.
+- **Leap (case-insensitive):** currently unbound in TUI mode.
 - **Leap Again:** not currently mapped in TUI mode.
 - **Selection while leaping:** available via the editor selection model; terminal mappings focus on reliable single-modifier input.
 - **Arrows / PageUp / PageDown:** Move or select with Shift.
@@ -35,8 +35,12 @@ go build -o gc .
 - **Comment toggle:** `Ctrl+/` toggles `//` on selection or current line.
 - **Clipboard:** `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
 - **Go autocompletion:** In Go buffers, completion is non-interruptive. The editor auto-completes only when there is a single high-confidence `gopls` result (prefix length at least 3 and identifier-safe insert text); no suggestion popup is shown.
-- **Go symbol info:** `Ctrl+I` (or `Esc` then `i`) toggles a popup with information about the symbol under cursor (keywords/builtins with usage examples, local definitions, and hover text when available). `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long content.
+- **Go symbol info:** `Esc` then `i` toggles a popup with information about the symbol under cursor (keywords/builtins with usage examples, local definitions, and hover text when available). `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long content.
 - **Esc command mode:** `Esc` is a command prefix for control-style actions (`Esc+f`, `Esc+Shift+S`, `Esc+Shift+Q`, `Esc+i`, `Esc+Esc`).
+- **Esc delayed help popup:** If `Esc` stays pending for a short delay, a lower-right popup appears showing grouped `Esc` commands by next letter (no `Ctrl+...` entries).
+- **Search mode:** `Esc+/` enters incremental search. Type the pattern (caret jumps to full matches while typing), then press `/` to lock the pattern. While locked, `Tab`/`Shift+Tab` move to next/previous match with wrap. If the current pattern is empty when `/` is pressed, the editor reuses the last non-empty search pattern and jumps to the next match. Any other key exits search and performs its normal action; `x` exits search and enters line-highlight mode.
+- **Line highlight mode:** `Esc+X` starts line highlighting from the current line. Press `x` repeatedly to extend selection by one line each time. `Esc` exits this mode.
+- **Buffer clear:** `Esc+Shift+Delete` clears the entire active buffer.
 - **Language mode cycle:** `Esc+M` cycles active buffer language mode (`text -> go -> markdown -> c -> miranda -> text`), including untitled buffers.
 - **Less mode:** `Esc+Space` enters paging mode; `Space` pages forward and `Esc` exits less mode.
 
@@ -60,10 +64,10 @@ go build -o gc .
 - **New / cycle buffers:** `Ctrl+B` creates `<untitled>`; `Shift+Tab` cycles.
 - **File picker:** `Ctrl+O` opens a picker buffer rooted at the current directory; entries start with `..` to go up. Leap to a line and press `Ctrl+L` to open; directories open in-place; files open in new buffers or switch if already loaded.
 - **Save current:** `Ctrl+W` saves the active buffer. If unnamed (`<untitled>`), the input line prompts “Save as:” — type a path and press Enter.
-- **Save + fmt/fix + reload:** `Ctrl+F` saves current file, runs `go fmt` and `go fix` in the file's directory package context, then reloads the file into the current buffer.
+- **Save + fmt/fix + reload:** `Esc+F` saves current file, runs `go fmt` and `go fix` in the file's directory package context, then reloads the file into the current buffer.
 - **Run package:** `Ctrl+R` invokes `go run .` in the active file's directory and opens a run-output buffer. It writes the executed command header first, streams stdout/stderr (`[stderr]`-prefixed), then appends an `[exit]` result line.
-- **Save dirty buffers:** `Ctrl+Shift+S` saves only buffers marked dirty.
-- **Close buffer / quit:** `Ctrl+Q` closes the current buffer; `Ctrl+Shift+Q` quits. `Esc` is a command prefix; press `Esc` then `Esc` to close the current buffer.
+- **Save dirty buffers:** `Esc+Shift+S` saves only buffers marked dirty.
+- **Close buffer / quit:** `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits. `Esc` is a command prefix; press `Esc` then `Esc` to close the current buffer.
 
 ## Status & Input Lines
 
@@ -86,7 +90,7 @@ go build -o gc .
 
 ## Tips & Examples
 
-- **Jump around text:** Press `Alt+F`, type `foo`, then Enter — caret jumps to `foo` ignoring case.
+- **Jump around text:** leap remains available in editor core, but is currently unbound in TUI mode.
 - **Indent quickly:** Press space twice on a line to insert a tab at its start.
 - **Open by pattern:** `Ctrl+O`, type a few letters of the filename with Leap, `Ctrl+L` to open. Use `..` to go up a directory.
 - **Save unnamed buffer:** `Ctrl+W`, type `notes/todo.txt` in the input line, Enter — file is created and saved, buffer is renamed.

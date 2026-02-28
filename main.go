@@ -15,7 +15,7 @@ import (
 	"gc/editor"
 )
 
-const Debug = false
+const debug = false
 const tabWidth = 4
 
 type bufferSlot struct {
@@ -65,8 +65,27 @@ type appState struct {
 	cmdPrefixActive  bool
 	suppressTextOnce bool
 	lessMode         bool
-	render           renderCache
-	startupFast      bool
+	escSeqActive     bool
+	escSeq           string
+	// Esc-prefix delayed helper popup state.
+	escHelpVisible   bool
+	escPrefixAt      time.Time
+	escHelpToken     int
+	escHelpDelay     time.Duration
+	requestInterrupt func(any)
+	// Line-highlight mode state.
+	lineHighlightMode       bool
+	lineHighlightAnchorLine int
+	lineHighlightToLine     int
+	// Incremental search state.
+	searchActive      bool
+	searchQuery       []rune
+	lastSearchQuery   []rune
+	searchPatternDone bool
+	searchOrigin      int
+	searchLastMatch   int
+	render            renderCache
+	startupFast       bool
 }
 
 type helpEntry struct {
@@ -75,25 +94,28 @@ type helpEntry struct {
 }
 
 var helpEntries = []helpEntry{
-	{"Leap forward / backward", "Alt+F / Alt+B (type query)"},
+	{"Leap forward / backward", "Unbound in TUI mode"},
 	{"Leap Again", "N/A in TUI mode"},
 	{"New buffer / cycle buffers", "Ctrl+B / Shift+Tab"},
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
-	{"Save current / save all", "Ctrl+W / Ctrl+Shift+S"},
-	{"Save + fmt/fix + reload", "Ctrl+F"},
+	{"Save current / save all", "Ctrl+W / Esc+Shift+S"},
+	{"Save + fmt/fix + reload", "Esc+F"},
 	{"Run package (go run .)", "Ctrl+R"},
-	{"Close buffer / quit", "Ctrl+Q / Ctrl+Shift+Q"},
+	{"Close buffer / quit", "Ctrl+Q / Esc+Shift+Q"},
 	{"Undo", "Ctrl+U"},
 	{"Comment / uncomment", "Ctrl+/ (selection or current line)"},
 	{"Line start / end", "Ctrl+A / Ctrl+E (Shift = select)"},
 	{"Buffer start / end", "Ctrl+Shift+A / Ctrl+Shift+E"},
 	{"Kill to EOL", "Ctrl+K"},
 	{"Copy / Cut / Paste", "Ctrl+C / Ctrl+X / Ctrl+V"},
-	{"Symbol info under cursor (Go)", "Ctrl+I"},
+	{"Symbol info under cursor (Go)", "Esc+I"},
 	{"Cycle language mode", "Esc+M"},
+	{"Search mode", "Esc+/ then type pattern; / locks; Tab/Shift+Tab navigate; x enters line highlight mode"},
+	{"Line highlight mode", "Esc+X (or x from locked search), then x to extend by line; Esc exits"},
 	{"Autocomplete (Go mode)", "Tab"},
 	{"Less mode", "Esc+Space (Space page, Esc exit)"},
 	{"Navigation", "Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select)"},
+	{"Delete buffer contents", "Esc+Shift+Delete"},
 	{"Escape", "Closes symbol info popup or exits less mode; otherwise command prefix (Esc then Esc closes current buffer)"},
 	{"Help buffer", "Ctrl+Shift+/ (Ctrl+?)"},
 }
@@ -825,10 +847,6 @@ func wrapPopupText(text string, maxChars int) []string {
 	return out
 }
 
-func bufferLanguageMode(path string, buf []rune) string {
-	return bufferLanguageModeFromSource(path, string(buf))
-}
-
 func syntaxKindLabel(kind syntaxKind) string {
 	switch kind {
 	case syntaxGo:
@@ -842,10 +860,6 @@ func syntaxKindLabel(kind syntaxKind) string {
 	default:
 		return "text"
 	}
-}
-
-func bufferLanguageModeFromSource(path, src string) string {
-	return syntaxKindLabel(detectSyntax(path, src))
 }
 
 func bufferSyntaxKind(app *appState, path string, buf []rune) syntaxKind {
@@ -1039,12 +1053,6 @@ func modsString(m modMask) string {
 	}
 	if (m & modCtrl) != 0 {
 		add("LCTRL")
-	}
-	if (m & modLCmd) != 0 {
-		add("LCMD")
-	}
-	if (m & modRCmd) != 0 {
-		add("RCMD")
 	}
 	if (m & modLAlt) != 0 {
 		add("LALT")

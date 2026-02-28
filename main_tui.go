@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,13 +53,17 @@ func runTUI() error {
 	ed := editor.NewEditor("")
 	ed.SetClipboard(clip)
 	app := appState{
-		blinkAt:     time.Now(),
-		openRoot:    root,
-		syntaxHL:    newGoHighlighter(),
-		syntaxCheck: newGoSyntaxChecker(),
-		gopls:       newGoplsClient(),
-		clipboard:   clip,
-		startupFast: true,
+		blinkAt:      time.Now(),
+		openRoot:     root,
+		syntaxHL:     newGoHighlighter(),
+		syntaxCheck:  newGoSyntaxChecker(),
+		gopls:        newGoplsClient(),
+		clipboard:    clip,
+		startupFast:  true,
+		escHelpDelay: 700 * time.Millisecond,
+	}
+	app.requestInterrupt = func(data any) {
+		_ = screen.PostEvent(tcell.NewEventInterrupt(data))
 	}
 	app.initBuffers(ed)
 	defer app.gopls.close()
@@ -66,13 +71,14 @@ func runTUI() error {
 	if len(os.Args) > 1 {
 		loadStartupFiles(&app, filterArgsToFiles(os.Args[1:]))
 	}
-	go func() {
-		// Force a second frame quickly so startup can paint fast first, then enrich.
-		screen.PostEventWait(tcell.NewEventInterrupt(nil))
-	}()
 
 	for {
+		fastStartupPass := app.startupFast
 		drawTUI(screen, &app)
+		if fastStartupPass {
+			// Immediately draw again so startup can paint fast first, then enrich.
+			continue
+		}
 		ev := screen.PollEvent()
 		switch e := ev.(type) {
 		case *tcell.EventResize:
@@ -82,27 +88,45 @@ func runTUI() error {
 				return nil
 			}
 		case *tcell.EventInterrupt:
-			// Wake-up redraw.
+			handleTUIInterrupt(&app, e)
 		}
 	}
+}
+
+func handleTUIInterrupt(app *appState, ev *tcell.EventInterrupt) {
+	if app == nil || ev == nil {
+		return
+	}
+	token, ok := ev.Data().(int)
+	if !ok || token != app.escHelpToken {
+		return
+	}
+	delay := app.escHelpDelay
+	if delay <= 0 {
+		delay = 700 * time.Millisecond
+	}
+	if !app.cmdPrefixActive || app.escHelpVisible {
+		return
+	}
+	// A newer prefix key may already have consumed Esc; only show help after the full delay.
+	if time.Since(app.escPrefixAt) < delay {
+		return
+	}
+	app.escHelpVisible = true
 }
 
 func handleTUIKey(app *appState, ev *tcell.EventKey) bool {
 	if app == nil || ev == nil {
 		return true
 	}
+	if app.escSeqActive {
+		return handleEscSeqKey(app, ev)
+	}
 	mods := tcellToMods(ev.Modifiers())
-
-	// Primary leap activation in the TUI: Alt+F / Alt+B.
-	if ev.Key() == tcell.KeyRune && (ev.Modifiers()&tcell.ModAlt) != 0 {
-		switch strings.ToLower(string(ev.Rune())) {
-		case "f":
-			app.ed.LeapStart(editor.DirFwd)
-			return true
-		case "b":
-			app.ed.LeapStart(editor.DirBack)
-			return true
-		}
+	if app.cmdPrefixActive && ev.Key() == tcell.KeyRune && ev.Rune() == '[' {
+		app.escSeqActive = true
+		app.escSeq = "["
+		return true
 	}
 
 	// Prefix mode: force next key through command dispatch (not text input).
@@ -112,10 +136,15 @@ func handleTUIKey(app *appState, ev *tcell.EventKey) bool {
 			if inferShiftFromRune(ev.Rune()) {
 				keyMods |= modShift
 			}
-			return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: k, mods: keyMods})
+			keepRunning := dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: k, mods: keyMods})
+			// TUI prefix dispatch does not have a separate text-input event for this key.
+			app.suppressTextOnce = false
+			return keepRunning
 		}
 		// Unknown key still consumes the prefix and does not insert text.
-		return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: keyUnknown, mods: mods})
+		keepRunning := dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: keyUnknown, mods: mods})
+		app.suppressTextOnce = false
+		return keepRunning
 	}
 	if app.lessMode && ev.Key() == tcell.KeyRune && ev.Rune() == ' ' {
 		return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: keySpace, mods: mods})
@@ -139,6 +168,116 @@ func handleTUIKey(app *appState, ev *tcell.EventKey) bool {
 			keyMods |= modShift
 		}
 		return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: k, mods: keyMods})
+	}
+	return true
+}
+
+func handleEscSeqKey(app *appState, ev *tcell.EventKey) bool {
+	if ev == nil || app == nil {
+		return true
+	}
+	if ev.Key() != tcell.KeyRune {
+		app.escSeqActive = false
+		app.escSeq = ""
+		app.cmdPrefixActive = false
+		if k, ok := tcellKeyToKeyCode(ev); ok {
+			return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: k, mods: tcellToMods(ev.Modifiers())})
+		}
+		return true
+	}
+	app.escSeq += string(ev.Rune())
+	k, mods, done, ok := decodeEscSeqArrow(app.escSeq)
+	if !done {
+		if len(app.escSeq) > 16 {
+			app.escSeqActive = false
+			app.escSeq = ""
+			app.cmdPrefixActive = false
+		}
+		return true
+	}
+	app.escSeqActive = false
+	app.escSeq = ""
+	app.cmdPrefixActive = false
+	if !ok {
+		return true
+	}
+	return dispatchTUIKeyEvent(app, keyEvent{down: true, repeat: 0, key: k, mods: mods})
+}
+
+func decodeEscSeqArrow(seq string) (keyCode, modMask, bool, bool) {
+	if !strings.HasPrefix(seq, "[") || len(seq) < 2 {
+		return keyUnknown, 0, false, false
+	}
+	last := seq[len(seq)-1]
+	if last != 'A' && last != 'B' && last != 'C' && last != 'D' {
+		if isEscSeqPrefix(seq) {
+			return keyUnknown, 0, false, false
+		}
+		return keyUnknown, 0, true, false
+	}
+	k := keyUnknown
+	switch last {
+	case 'A':
+		k = keyUp
+	case 'B':
+		k = keyDown
+	case 'C':
+		k = keyRight
+	case 'D':
+		k = keyLeft
+	}
+	payload := seq[1 : len(seq)-1]
+	if payload == "" {
+		return k, 0, true, true
+	}
+	parts := strings.Split(payload, ";")
+	if len(parts) == 1 {
+		return k, 0, true, true
+	}
+	if len(parts) != 2 {
+		return keyUnknown, 0, true, false
+	}
+	modParam, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return keyUnknown, 0, true, false
+	}
+	return k, modMaskFromCSI(modParam), true, true
+}
+
+func modMaskFromCSI(modParam int) modMask {
+	var mods modMask
+	// XTerm modifier parameter uses 1 as base.
+	// 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl, 6=Shift+Ctrl, 7=Alt+Ctrl, 8=Shift+Alt+Ctrl.
+	switch modParam {
+	case 2:
+		mods |= modShift
+	case 3:
+		mods |= modLAlt
+	case 4:
+		mods |= modShift | modLAlt
+	case 5:
+		mods |= modCtrl
+	case 6:
+		mods |= modShift | modCtrl
+	case 7:
+		mods |= modLAlt | modCtrl
+	case 8:
+		mods |= modShift | modLAlt | modCtrl
+	}
+	return mods
+}
+
+func isEscSeqPrefix(seq string) bool {
+	if !strings.HasPrefix(seq, "[") {
+		return false
+	}
+	for _, r := range seq[1:] {
+		if r == ';' {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
 	}
 	return true
 }
@@ -278,6 +417,12 @@ func drawTUI(s tcell.Screen, app *appState) {
 	base := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
 	gutter := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorDarkCyan)
 	current := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	var sel *selectionRange
+	if app.ed.Sel.Active {
+		selA, selB := app.ed.Sel.Normalised()
+		sel = &selectionRange{a: selA, b: selB}
+	}
+	lineStarts := computeLineStarts(lines)
 
 	for row := 0; row < contentH; row += lineH {
 		ln := startLine + row
@@ -291,7 +436,10 @@ func drawTUI(s tcell.Screen, app *appState) {
 		}
 		g := fmt.Sprintf("%4d ", ln+1)
 		drawCellText(s, 0, row, g, gutter)
-		drawStyledTUICellLine(s, 5, row, lines[ln], lineStylesAt(lineStyles, ln), lineStyle)
+		drawStyledTUICellLine(
+			s, 5, row, lines[ln], lineStylesAt(lineStyles, ln), lineStyle,
+			lineStartsAt(lineStarts, ln), sel,
+		)
 	}
 
 	status := fmt.Sprintf("%s | lang=%s | root=%s", bufferLabel(app), langMode, app.openRoot)
@@ -308,15 +456,20 @@ func drawTUI(s tcell.Screen, app *appState) {
 		input = app.inputPrompt + app.inputValue
 	} else if app.open.Active {
 		input = "Open: " + app.open.Query
+	} else if app.searchActive {
+		input = "Search: " + string(app.searchQuery)
 	} else if app.ed.Leap.Active {
 		input = "Leap: " + string(app.ed.Leap.Query)
 	} else {
-		input = "Alt+f / Alt+b leap | Shift+Tab buffer cycle"
+		input = "Leap: unbound in TUI | Shift+Tab buffer cycle"
 	}
 	drawCellText(s, 0, h-1, padRight(input, w), tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorGray))
 
 	if strings.TrimSpace(app.symbolInfoPopup) != "" {
 		drawTUISymbolPopup(s, app, w, h)
+	}
+	if app.escHelpVisible {
+		drawTUIEscHelpPopup(s, w, h)
 	}
 
 	caretX := 5 + visualColForRuneCol(lines[cLine], cCol, tabWidth)
@@ -326,6 +479,109 @@ func drawTUI(s tcell.Screen, app *appState) {
 		s.HideCursor()
 	}
 	s.Show()
+}
+
+type escShortcutCategory struct {
+	title string
+	items []string
+}
+
+var escHelpCategories = []escShortcutCategory{
+	{
+		title: "Files",
+		items: []string{
+			"b  new buffer",
+			"w  save current",
+			"f  save + fmt/fix + reload",
+			"S  save dirty buffers",
+		},
+	},
+	{
+		title: "Search & Modes",
+		items: []string{
+			"/  search mode",
+			"x  line highlight mode",
+			"m  cycle language mode",
+			"i  symbol info popup",
+		},
+	},
+	{
+		title: "Navigation",
+		items: []string{
+			",  page up",
+			".  page down",
+			"Space  less mode",
+			"Esc  close current buffer",
+		},
+	},
+	{
+		title: "Session",
+		items: []string{
+			"Q  quit all buffers",
+			"Delete  clear buffer contents",
+		},
+	},
+}
+
+func drawTUIEscHelpPopup(s tcell.Screen, w, h int) {
+	lines := escHelpPopupLines()
+	if len(lines) == 0 || w < 20 || h < 8 {
+		return
+	}
+	maxLine := 0
+	for _, ln := range lines {
+		if len(ln) > maxLine {
+			maxLine = len(ln)
+		}
+	}
+	boxW := min(max(34, maxLine+4), max(20, w-2))
+	boxH := min(len(lines)+3, max(8, h-3))
+	x0 := max(0, w-boxW-1)
+	y0 := max(0, h-boxH-2)
+	bg := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorWhite)
+	border := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightCyan)
+	title := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightYellow)
+	dim := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorSilver)
+	for y := range boxH {
+		for x := range boxW {
+			ch := ' '
+			st := bg
+			if y == 0 || y == boxH-1 || x == 0 || x == boxW-1 {
+				ch = '│'
+				if y == 0 || y == boxH-1 {
+					ch = '─'
+				}
+				if y == 0 && x == 0 {
+					ch = '┌'
+				} else if y == 0 && x == boxW-1 {
+					ch = '┐'
+				} else if y == boxH-1 && x == 0 {
+					ch = '└'
+				} else if y == boxH-1 && x == boxW-1 {
+					ch = '┘'
+				}
+				st = border
+			}
+			s.SetContent(x0+x, y0+y, ch, nil, st)
+		}
+	}
+	drawCellText(s, x0+2, y0+1, padRight(lines[0], boxW-4), title)
+	for i := 1; i < boxH-3 && i < len(lines); i++ {
+		drawCellText(s, x0+2, y0+1+i, padRight(lines[i], boxW-4), bg)
+	}
+	drawCellText(s, x0+2, y0+boxH-2, padRight("Esc prefix active: press next key", boxW-4), dim)
+}
+
+func escHelpPopupLines() []string {
+	out := []string{"Esc Commands"}
+	for _, cat := range escHelpCategories {
+		out = append(out, "")
+		out = append(out, "["+cat.title+"]")
+		for _, item := range cat.items {
+			out = append(out, "  "+item)
+		}
+	}
+	return out
 }
 
 func renderData(app *appState) ([]string, map[int][]tokenStyle, string) {
@@ -397,11 +653,50 @@ func lineStylesAt(all map[int][]tokenStyle, i int) []tokenStyle {
 	return all[i]
 }
 
-func drawStyledTUICellLine(s tcell.Screen, x, y int, line string, style []tokenStyle, base tcell.Style) {
+func lineStartsAt(starts []int, i int) int {
+	if i < 0 || i >= len(starts) {
+		return 0
+	}
+	return starts[i]
+}
+
+func computeLineStarts(lines []string) []int {
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]int, len(lines))
+	pos := 0
+	for i := range lines {
+		out[i] = pos
+		pos += len([]rune(lines[i])) + 1
+	}
+	return out
+}
+
+type selectionRange struct {
+	a int
+	b int
+}
+
+func drawStyledTUICellLine(
+	s tcell.Screen,
+	x, y int,
+	line string,
+	style []tokenStyle,
+	base tcell.Style,
+	lineStart int,
+	sel *selectionRange,
+) {
 	runes := []rune(line)
 	visual := 0
 	for i, r := range runes {
 		st := tuiStyleForToken(base, styleAt(style, i))
+		if sel != nil {
+			abs := lineStart + i
+			if abs >= sel.a && abs < sel.b {
+				st = st.Background(tcell.ColorDarkSlateBlue).Foreground(tcell.ColorWhite)
+			}
+		}
 		if r == '\t' {
 			next := ((visual / tabWidth) + 1) * tabWidth
 			for visual < next {
@@ -448,120 +743,120 @@ func tuiStyleForToken(base tcell.Style, ts tokenStyle) tcell.Style {
 }
 
 func ctrlRuneToKey(r rune) (keyCode, bool) {
-	switch strings.ToLower(string(r)) {
-	case "q":
+	switch unicode.ToLower(r) {
+	case 'q':
 		return keyQ, true
-	case "w":
+	case 'w':
 		return keyW, true
-	case "e":
+	case 'e':
 		return keyE, true
-	case "r":
+	case 'r':
 		return keyR, true
-	case "a":
+	case 'a':
 		return keyA, true
-	case "s":
+	case 's':
 		return keyS, true
-	case "f":
+	case 'f':
 		return keyF, true
-	case "o":
+	case 'o':
 		return keyO, true
-	case "l":
+	case 'l':
 		return keyL, true
-	case "k":
+	case 'k':
 		return keyK, true
-	case "u":
+	case 'u':
 		return keyU, true
-	case "c":
+	case 'c':
 		return keyC, true
-	case "x":
+	case 'x':
 		return keyX, true
-	case "v":
+	case 'v':
 		return keyV, true
-	case "i":
+	case 'i':
 		return keyTab, true
-	case "/":
+	case '/':
 		return keySlash, true
-	case ",":
+	case ',':
 		return keyComma, true
-	case ".":
+	case '.':
 		return keyPeriod, true
-	case "<":
+	case '<':
 		return keyComma, true
-	case ">":
+	case '>':
 		return keyPeriod, true
 	}
 	return keyUnknown, false
 }
 
 func runeToKeyCode(r rune) (keyCode, bool) {
-	switch strings.ToLower(string(r)) {
-	case "a":
+	switch unicode.ToLower(r) {
+	case 'a':
 		return keyA, true
-	case "b":
+	case 'b':
 		return keyB, true
-	case "c":
+	case 'c':
 		return keyC, true
-	case "d":
+	case 'd':
 		return keyD, true
-	case "e":
+	case 'e':
 		return keyE, true
-	case "f":
+	case 'f':
 		return keyF, true
-	case "g":
+	case 'g':
 		return keyG, true
-	case "h":
+	case 'h':
 		return keyH, true
-	case "i":
+	case 'i':
 		return keyI, true
-	case "j":
+	case 'j':
 		return keyJ, true
-	case "k":
+	case 'k':
 		return keyK, true
-	case "l":
+	case 'l':
 		return keyL, true
-	case "m":
+	case 'm':
 		return keyM, true
-	case "n":
+	case 'n':
 		return keyN, true
-	case "o":
+	case 'o':
 		return keyO, true
-	case "p":
+	case 'p':
 		return keyP, true
-	case "q":
+	case 'q':
 		return keyQ, true
-	case "r":
+	case 'r':
 		return keyR, true
-	case "s":
+	case 's':
 		return keyS, true
-	case "t":
+	case 't':
 		return keyT, true
-	case "u":
+	case 'u':
 		return keyU, true
-	case "v":
+	case 'v':
 		return keyV, true
-	case "w":
+	case 'w':
 		return keyW, true
-	case "x":
+	case 'x':
 		return keyX, true
-	case "y":
+	case 'y':
 		return keyY, true
-	case "z":
+	case 'z':
 		return keyZ, true
-	case "/":
+	case '/':
 		return keySlash, true
-	case ",":
+	case ',':
 		return keyComma, true
-	case ".":
+	case '.':
 		return keyPeriod, true
-	case "<":
+	case '<':
 		return keyComma, true
-	case ">":
+	case '>':
 		return keyPeriod, true
-	case "-":
+	case '-':
 		return keyMinus, true
-	case "=":
+	case '=':
 		return keyEquals, true
-	case " ":
+	case ' ':
 		return keySpace, true
 	}
 	return keyUnknown, false

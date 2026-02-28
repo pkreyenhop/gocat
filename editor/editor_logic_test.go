@@ -231,6 +231,25 @@ func TestMoveCaretLineUpDown(t *testing.T) {
 	})
 }
 
+func TestMoveCaretLineByLineExtendsWholeLines(t *testing.T) {
+	run(t, "ab\ncd\nef\n", 1, func(f *fixture) {
+		lines := SplitLines(f.ed.Buf)
+		f.ed.MoveCaretLineByLine(lines, 1)
+		f.expectCaret(3)
+		f.expectSelection(true, 0, 6)
+
+		lines = SplitLines(f.ed.Buf)
+		f.ed.MoveCaretLineByLine(lines, 1)
+		f.expectCaret(6)
+		f.expectSelection(true, 0, 9)
+
+		lines = SplitLines(f.ed.Buf)
+		f.ed.MoveCaretLineByLine(lines, -1)
+		f.expectCaret(3)
+		f.expectSelection(true, 0, 6)
+	})
+}
+
 func TestMoveCaretPage(t *testing.T) {
 	buf := "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n"
 	run(t, buf, 0, func(f *fixture) {

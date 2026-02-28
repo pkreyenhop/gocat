@@ -10,15 +10,22 @@ go doc -all ./editor
 ## `gc` (command package)
 
 ```text
-package main // import "gc"
+package main // import "."
 
-const Debug = false
 ```
+
+### Runtime Modes (TUI)
+
+- `Esc` command-prefix mode: if delayed, a lower-right grouped popup shows valid next-letter commands.
+- `Esc+/` search mode: type pattern, press `/` to lock, then `Tab`/`Shift+Tab` navigate matches.
+  - Locking an empty pattern (`/`) repeats the last non-empty search and jumps to the next match.
+- `Esc+X` line-highlight mode: `x` extends highlighted lines; `Esc` exits.
+- `Esc+Space` less mode: `Space` pages forward; `Esc` exits.
 
 ## `gc/editor`
 
 ```text
-package editor // import "gc/editor"
+package editor // import "."
 
 Package editor provides headless editing and Canon-Cat-inspired Leap logic.
 
@@ -65,8 +72,6 @@ type Editor struct {
 func NewEditor(initial string) *Editor
 
 func (e *Editor) BackspaceOrDeleteSelection(isBackspace bool)
-
-func (e *Editor) BeginLeapSelection()
 
 func (e *Editor) CaretToBufferEdge(lines []string, toEnd bool, extendSelection bool)
     CaretToBufferEdge moves caret to start or end of buffer.
@@ -128,10 +133,7 @@ type LeapState struct {
 	OriginCaret  int
 	LastFoundPos int
 
-	HeldL bool
-	HeldR bool
-
-	// Selection state while both leap trigger keys are active.
+	// Selection state while leap-driven selection is active.
 	Selecting  bool
 	SelAnchor  int
 	LastSrc    string // "textinput" or "keydown"

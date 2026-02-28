@@ -1,0 +1,84 @@
+ignoreGeneratedHeader = false
+severity = "error"
+confidence = 0.8
+errorCode = 1
+warningCode = 1
+
+[rule.blank-imports]
+severity = "error"
+
+[rule.context-as-argument]
+severity = "error"
+
+[rule.context-keys-type]
+severity = "error"
+
+[rule.dot-imports]
+severity = "error"
+
+[rule.error-return]
+severity = "error"
+
+[rule.error-strings]
+severity = "error"
+
+[rule.error-naming]
+severity = "error"
+
+[rule.exported]
+severity = "error"
+
+[rule.if-return]
+severity = "error"
+
+[rule.increment-decrement]
+severity = "error"
+
+[rule.indent-error-flow]
+severity = "error"
+
+[rule.package-comments]
+severity = "error"
+
+[rule.range]
+severity = "error"
+
+[rule.receiver-naming]
+severity = "error"
+
+[rule.redefines-builtin-id]
+severity = "error"
+
+[rule.time-naming]
+severity = "error"
+
+[rule.unexported-return]
+severity = "error"
+
+[rule.unreachable-code]
+severity = "error"
+
+[rule.var-naming]
+severity = "error"
+arguments = [["ID"]]
+
+[rule.var-declaration]
+severity = "error"
+
+[rule.unused-parameter]
+severity = "error"
+
+[rule.confusing-naming]
+severity = "error"
+
+[rule.superfluous-else]
+severity = "error"
+
+[rule.struct-tag]
+severity = "error"
+
+[rule.modifies-parameter]
+severity = "error"
+
+[rule.flag-parameter]
+severity = "error"

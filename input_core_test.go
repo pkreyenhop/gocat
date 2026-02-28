@@ -9,7 +9,7 @@ import (
 	"gc/editor"
 )
 
-func TestHandleKeyEventCtrlBAddsBufferWithoutSDLDispatch(t *testing.T) {
+func TestHandleKeyEventCtrlBAddsBufferWithoutFrontendDispatch(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("abc"))
 	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyB, mods: modCtrl}) {
@@ -20,7 +20,7 @@ func TestHandleKeyEventCtrlBAddsBufferWithoutSDLDispatch(t *testing.T) {
 	}
 }
 
-func TestHandleTextEventInsertsTextWithoutSDLDispatch(t *testing.T) {
+func TestHandleTextEventInsertsTextWithoutFrontendDispatch(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("ab"))
 	app.ed.Caret = len(app.ed.Buf)
@@ -186,6 +186,426 @@ func TestEscMCyclesBufferMode(t *testing.T) {
 	}
 	if app.buffers[0].mode != syntaxMarkdown {
 		t.Fatalf("mode after second cycle=%v, want %v", app.buffers[0].mode, syntaxMarkdown)
+	}
+}
+
+func TestCtrlShortcutsReplacedByEscPrefix(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\nfunc main(){}\n"))
+	app.currentPath = "p.go"
+	app.buffers[0].path = "p.go"
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyI, mods: modCtrl}) {
+		t.Fatalf("ctrl+i should continue")
+	}
+	if app.symbolInfoPopup != "" {
+		t.Fatalf("ctrl+i should no longer open symbol info")
+	}
+
+	app.addBuffer()
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyQ, mods: modCtrl | modShift}) {
+		t.Fatalf("ctrl+shift+q should not quit now")
+	}
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape, mods: 0}) {
+		t.Fatalf("esc should arm prefix")
+	}
+	if handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyQ, mods: modShift}) {
+		t.Fatalf("esc+shift+q should still quit")
+	}
+}
+
+func TestEscShiftDeleteClearsWholeBuffer(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("one\ntwo\nthree\n"))
+	app.buffers[0].dirty = false
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape}) {
+		t.Fatalf("esc should arm prefix")
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDelete, mods: modShift}) {
+		t.Fatalf("esc+shift+delete should continue")
+	}
+
+	if got := string(app.ed.Buf); got != "" {
+		t.Fatalf("buffer should be cleared, got %q", got)
+	}
+	if app.ed.Caret != 0 {
+		t.Fatalf("caret should reset to 0, got %d", app.ed.Caret)
+	}
+	if !app.buffers[0].dirty {
+		t.Fatalf("clear should mark buffer dirty")
+	}
+}
+
+func TestEscPrefixCtrlCommandDoesNotDropNextText(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor(""))
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape}) {
+		t.Fatalf("esc should arm prefix")
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyB, mods: modCtrl}) {
+		t.Fatalf("prefixed ctrl+b should continue")
+	}
+	if len(app.buffers) != 2 {
+		t.Fatalf("expected new buffer from prefixed ctrl+b, got %d", len(app.buffers))
+	}
+	if !handleTextEvent(&app, "a", 0) {
+		t.Fatalf("text event should continue")
+	}
+	if got := string(app.ed.Buf); got != "a" {
+		t.Fatalf("first typed character should be preserved, got %q", got)
+	}
+}
+
+func TestShiftUpDownExtendsLineSelectionForDelete(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\nl4\n"))
+	app.ed.Caret = 1 // inside line 1
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDown, mods: modShift}) {
+		t.Fatalf("shift+down should continue")
+	}
+	if !app.ed.Sel.Active {
+		t.Fatalf("selection should be active after shift+down")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 0 || b != 6 {
+		t.Fatalf("selection after first shift+down = (%d,%d), want (0,6)", a, b)
+	}
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDown, mods: modShift}) {
+		t.Fatalf("second shift+down should continue")
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 0 || b != 9 {
+		t.Fatalf("selection after second shift+down = (%d,%d), want (0,9)", a, b)
+	}
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyBackspace, mods: 0}) {
+		t.Fatalf("backspace should continue")
+	}
+	if got := string(app.ed.Buf); got != "l4\n" {
+		t.Fatalf("deleting line selection failed, got %q", got)
+	}
+}
+
+func TestShiftUpContractsLineSelectionByLine(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\nl4\n"))
+	app.ed.Caret = 1
+
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDown, mods: modShift})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDown, mods: modShift})
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyUp, mods: modShift}) {
+		t.Fatalf("shift+up should continue")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 0 || b != 6 {
+		t.Fatalf("selection after contraction = (%d,%d), want (0,6)", a, b)
+	}
+}
+
+func TestEscXStartsLineHighlightModeAndXExtends(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\n"))
+	app.ed.Caret = 4 // on line 2
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape}) {
+		t.Fatalf("esc should arm prefix")
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyX}) {
+		t.Fatalf("esc+x should start line highlight mode")
+	}
+	if !app.lineHighlightMode {
+		t.Fatalf("line highlight mode should be active")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 3 || b != 6 {
+		t.Fatalf("selection after esc+x = (%d,%d), want (3,6)", a, b)
+	}
+
+	if !handleTextEvent(&app, "x", 0) {
+		t.Fatalf("x in line highlight mode should extend selection")
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 3 || b != 9 {
+		t.Fatalf("selection after x = (%d,%d), want (3,9)", a, b)
+	}
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyBackspace}) {
+		t.Fatalf("backspace should delete highlighted lines")
+	}
+	if got := string(app.ed.Buf); got != "l1\n" {
+		t.Fatalf("buffer after delete = %q, want %q", got, "l1\n")
+	}
+}
+
+func TestEscSlashSearchModeLiveAndTabWrap(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape}) {
+		t.Fatalf("esc should arm prefix")
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash}) {
+		t.Fatalf("esc+/ should start search mode")
+	}
+	if !app.searchActive {
+		t.Fatalf("search mode should be active")
+	}
+
+	if !handleTextEvent(&app, "h", 0) || !handleTextEvent(&app, "e", 0) || !handleTextEvent(&app, "l", 0) {
+		t.Fatalf("typing search query should continue")
+	}
+	if !app.searchActive {
+		t.Fatalf("search should stay active while entering pattern")
+	}
+	if app.ed.Caret != 5 {
+		t.Fatalf("caret after incremental search = %d, want 5", app.ed.Caret)
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 5 || b != 8 {
+		t.Fatalf("selection after incremental search = (%d,%d), want (5,8)", a, b)
+	}
+	if !handleTextEvent(&app, "/", 0) {
+		t.Fatalf("slash should lock search pattern")
+	}
+	if !app.searchPatternDone {
+		t.Fatalf("slash should finalize pattern entry")
+	}
+	if got := string(app.ed.Buf); got != "zero hello one hello two" {
+		t.Fatalf("search typing should not edit buffer, got %q", got)
+	}
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyTab}) {
+		t.Fatalf("tab in search mode should continue")
+	}
+	if app.ed.Caret != 15 {
+		t.Fatalf("caret after tab next = %d, want 15", app.ed.Caret)
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 15 || b != 18 {
+		t.Fatalf("selection after tab next = (%d,%d), want (15,18)", a, b)
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyTab}) {
+		t.Fatalf("tab wrap in search mode should continue")
+	}
+	if app.ed.Caret != 5 {
+		t.Fatalf("caret after tab wrap = %d, want 5", app.ed.Caret)
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyTab, mods: modShift}) {
+		t.Fatalf("shift+tab in search mode should continue")
+	}
+	if app.ed.Caret != 15 {
+		t.Fatalf("caret after shift+tab previous = %d, want 15", app.ed.Caret)
+	}
+}
+
+func TestSearchFinalizeWithSlashThenAnyOtherRuneExitsSearchAndInserts(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "/", 0)
+
+	if !app.searchActive {
+		t.Fatalf("search should still be active after slash lock")
+	}
+	if !handleTextEvent(&app, "e", 0) {
+		t.Fatalf("typing should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("typing non-tab/non-x should exit search mode")
+	}
+	if got := string(app.ed.Buf); got != "zero ehello one hello two" {
+		t.Fatalf("typed rune should be inserted after exiting search, got %q", got)
+	}
+}
+
+func TestSearchBeforeLockXExtendsPatternNotLineHighlight(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("xylophone xx"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "x", 0)
+
+	if !handleTextEvent(&app, "x", 0) {
+		t.Fatalf("typing x in unlocked search should continue")
+	}
+	if !app.searchActive {
+		t.Fatalf("search should stay active before lock")
+	}
+	if app.searchPatternDone {
+		t.Fatalf("search should not lock before slash")
+	}
+	if app.lineHighlightMode {
+		t.Fatalf("x before lock must not enter line-highlight mode")
+	}
+	if got := string(app.searchQuery); got != "xx" {
+		t.Fatalf("query should keep growing before lock, got %q", got)
+	}
+}
+
+func TestEmptySearchPatternRedoesLastSearch(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("a hello b hello c"))
+	app.ed.Caret = 0
+
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "e", 0)
+	_ = handleTextEvent(&app, "l", 0)
+	_ = handleTextEvent(&app, "l", 0)
+	_ = handleTextEvent(&app, "o", 0)
+	_ = handleTextEvent(&app, "/", 0) // lock search
+	if app.ed.Caret != 2 {
+		t.Fatalf("expected first match at 2, got %d", app.ed.Caret)
+	}
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape}) // exit search
+
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	if !handleTextEvent(&app, "/", 0) { // empty pattern: redo last search
+		t.Fatalf("empty pattern lock should continue")
+	}
+	if app.ed.Caret != 10 {
+		t.Fatalf("expected redo to next match at 10, got %d", app.ed.Caret)
+	}
+	if got := string(app.searchQuery); got != "hello" {
+		t.Fatalf("expected reused query 'hello', got %q", got)
+	}
+}
+
+func TestCtrlSlashTogglesCommentAndDoesNotStartSearch(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("line\n"))
+	app.ed.Caret = 0
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash, mods: modCtrl}) {
+		t.Fatalf("ctrl+/ should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("ctrl+/ should not start search mode")
+	}
+	if got := string(app.ed.Buf); got != "//line\n" {
+		t.Fatalf("ctrl+/ should toggle comment, got %q", got)
+	}
+}
+
+func TestSearchModeBackspaceCancelsAndDeletesSelection(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "/", 0)
+
+	if !app.searchActive || !app.ed.Sel.Active {
+		t.Fatalf("search should have active match selection")
+	}
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyBackspace}) {
+		t.Fatalf("backspace should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("backspace should cancel search mode")
+	}
+	if got := string(app.ed.Buf); got != "zerohello one hello two" {
+		t.Fatalf("backspace should apply normal behavior, got %q", got)
+	}
+}
+
+func TestSearchModeDeleteCancelsAndDeletesWordAtCaret(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "/", 0)
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDelete}) {
+		t.Fatalf("delete should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("delete should cancel search mode")
+	}
+	if got := string(app.ed.Buf); got != "zero  one hello two" {
+		t.Fatalf("delete should apply normal behavior, got %q", got)
+	}
+}
+
+func TestSearchModeXStartsLineHighlightAndNextXExtends(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("a\nhello\nb\nc\n"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "/", 0)
+
+	if !handleTextEvent(&app, "x", 0) {
+		t.Fatalf("x should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("x should exit search mode")
+	}
+	if !app.lineHighlightMode {
+		t.Fatalf("x should enter line highlight mode")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 2 || b != 8 {
+		t.Fatalf("first x should mark matched line, got (%d,%d)", a, b)
+	}
+	if !handleTextEvent(&app, "x", 0) {
+		t.Fatalf("second x should continue")
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 2 || b != 10 {
+		t.Fatalf("second x should extend by one line, got (%d,%d)", a, b)
+	}
+}
+
+func TestDeleteIgnoresSelectionAndDeletesWordAtCaret(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("alpha beta gamma"))
+	app.ed.Caret = 6 // on "beta"
+	app.ed.Sel.Active = true
+	app.ed.Sel.A = 0
+	app.ed.Sel.B = 5 // "alpha"
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDelete}) {
+		t.Fatalf("delete should continue")
+	}
+	if got := string(app.ed.Buf); got != "alpha  gamma" {
+		t.Fatalf("delete should remove word at caret, got %q", got)
+	}
+}
+
+func TestSearchModeShiftDeleteCancelsAndDeletesLine(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("a\nhello\nb\n"))
+	app.ed.Caret = 0
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyEscape})
+	_ = handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keySlash})
+	_ = handleTextEvent(&app, "h", 0)
+	_ = handleTextEvent(&app, "/", 0)
+
+	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDelete, mods: modShift}) {
+		t.Fatalf("shift+delete should continue")
+	}
+	if app.searchActive {
+		t.Fatalf("shift+delete should cancel search mode")
+	}
+	if got := string(app.ed.Buf); got != "a\nb\n" {
+		t.Fatalf("shift+delete should apply normal behavior, got %q", got)
 	}
 }
 

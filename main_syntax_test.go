@@ -62,8 +62,8 @@ func TestBufferLanguageMode(t *testing.T) {
 		{path: "a.txt", want: "text"},
 	}
 	for _, tc := range tests {
-		if got := bufferLanguageMode(tc.path, []rune(tc.src)); got != tc.want {
-			t.Fatalf("bufferLanguageMode(%q)=%q, want %q", tc.path, got, tc.want)
+		if got := syntaxKindLabel(detectSyntax(tc.path, tc.src)); got != tc.want {
+			t.Fatalf("syntax kind label(%q)=%q, want %q", tc.path, got, tc.want)
 		}
 	}
 }
@@ -115,7 +115,7 @@ func TestSyntaxHighlighterLineStyleForLanguages(t *testing.T) {
 	h := newGoHighlighter()
 	for _, tc := range tests {
 		lines := editor.SplitLines([]rune(tc.src))
-		got := h.lineStyleFor(tc.path, []rune(tc.src), lines)
+		got := h.lineStyleForKind(tc.path, tc.src, lines, detectSyntax(tc.path, tc.src))
 		if len(got) == 0 {
 			t.Fatalf("%s: expected highlighted tokens, got none", tc.name)
 		}

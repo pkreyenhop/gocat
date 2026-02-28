@@ -39,7 +39,6 @@ func TestCoreBehaviorsDocumentedInAllMarkdownGuides(t *testing.T) {
 		"Esc+M",
 		"Space",
 		"Esc",
-		"Ctrl+I",
 		"Esc+i",
 		"Shift+Tab",
 		"Ctrl+,",

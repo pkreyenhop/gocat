@@ -34,10 +34,7 @@ type LeapState struct {
 	OriginCaret  int
 	LastFoundPos int
 
-	HeldL bool
-	HeldR bool
-
-	// Selection state while both leap trigger keys are active.
+	// Selection state while leap-driven selection is active.
 	Selecting  bool
 	SelAnchor  int
 	LastSrc    string // "textinput" or "keydown"
@@ -59,6 +56,9 @@ type Editor struct {
 
 	clip Clipboard
 	undo []undoState
+
+	lineSelAnchorLine int
+	lineSelActive     bool
 }
 
 type undoState struct {
@@ -131,17 +131,6 @@ func (e *Editor) LeapBackspace() {
 	}
 	e.Leap.Query = e.Leap.Query[:len(e.Leap.Query)-1]
 	e.leapSearch()
-}
-
-func (e *Editor) BeginLeapSelection() {
-	if e.Leap.Selecting {
-		return
-	}
-	e.Leap.Selecting = true
-	e.Leap.SelAnchor = e.Caret
-	e.Sel.Active = true
-	e.Sel.A = e.Leap.SelAnchor
-	e.Sel.B = e.Caret
 }
 
 func (e *Editor) leapSearch() {
@@ -377,6 +366,7 @@ func (e *Editor) recordUndo() {
 }
 
 func (e *Editor) MoveCaret(delta int, extendSelection bool) {
+	e.lineSelActive = false
 	newPos := clamp(e.Caret+delta, 0, len(e.Buf))
 	if extendSelection {
 		if !e.Sel.Active {
@@ -394,6 +384,7 @@ func (e *Editor) MoveCaret(delta int, extendSelection bool) {
 
 // MoveCaretLine moves caret by whole lines using a line/col mapping.
 func (e *Editor) MoveCaretLine(lines []string, deltaLines int, extendSelection bool) {
+	e.lineSelActive = false
 	if deltaLines == 0 {
 		return
 	}
@@ -421,6 +412,30 @@ func (e *Editor) MoveCaretLine(lines []string, deltaLines int, extendSelection b
 		e.Sel.Active = false
 	}
 	e.Caret = pos
+}
+
+// MoveCaretLineByLine extends selection by whole lines (line-start to line-start).
+func (e *Editor) MoveCaretLineByLine(lines []string, deltaLines int) {
+	if deltaLines == 0 || len(lines) == 0 {
+		return
+	}
+	curLine, _ := LineColForPos(lines, e.Caret)
+	if !e.lineSelActive || !e.Sel.Active {
+		e.lineSelAnchorLine = curLine
+		e.lineSelActive = true
+	}
+	targetLine := clamp(curLine+deltaLines, 0, len(lines)-1)
+	from := min(e.lineSelAnchorLine, targetLine)
+	to := max(e.lineSelAnchorLine, targetLine)
+	selA := lineStartPos(lines, from)
+	selB := lineEndExclusivePos(lines, to, len(e.Buf))
+	e.Sel.Active = true
+	e.Sel.A = selA
+	e.Sel.B = selB
+	e.Caret = lineStartPos(lines, targetLine)
+	if from == to {
+		// Single-line mark remains active; keep mode so next Shift+Up/Down extends from anchor.
+	}
 }
 
 // MoveCaretPage moves by a page worth of lines (positive for down, negative for up).
@@ -463,6 +478,7 @@ func (e *Editor) CaretToBufferEdge(lines []string, toEnd bool, extendSelection b
 }
 
 func (e *Editor) moveCaretTo(lineIdx int, col int, lines []string, extendSelection bool) {
+	e.lineSelActive = false
 	if lineIdx < 0 {
 		lineIdx = 0
 	}
@@ -487,6 +503,36 @@ func (e *Editor) moveCaretTo(lineIdx int, col int, lines []string, extendSelecti
 		e.Sel.Active = false
 	}
 	e.Caret = pos
+}
+
+func lineStartPos(lines []string, lineIdx int) int {
+	if len(lines) == 0 {
+		return 0
+	}
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineIdx >= len(lines) {
+		lineIdx = len(lines) - 1
+	}
+	pos := 0
+	for i := 0; i < lineIdx; i++ {
+		pos += len([]rune(lines[i])) + 1
+	}
+	return pos
+}
+
+func lineEndExclusivePos(lines []string, lineIdx int, bufLen int) int {
+	if len(lines) == 0 {
+		return 0
+	}
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineIdx >= len(lines)-1 {
+		return bufLen
+	}
+	return lineStartPos(lines, lineIdx+1)
 }
 
 // KillToLineEnd deletes from caret to end-of-line (including newline if at EOL).

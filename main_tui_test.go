@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"gc/editor"
 
@@ -92,6 +93,425 @@ func TestTUIEscPrefixConsumesRuneWithoutInsertion(t *testing.T) {
 	}
 	if app.cmdPrefixActive {
 		t.Fatal("prefix should be consumed after next key")
+	}
+}
+
+func TestTUIEscDelayShowsShortcutHelpPopup(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("abc"))
+	app.escHelpDelay = time.Second
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix")
+	}
+	if !app.cmdPrefixActive {
+		t.Fatal("expected command prefix active")
+	}
+	app.escPrefixAt = time.Now().Add(-2 * time.Second)
+	handleTUIInterrupt(&app, tcell.NewEventInterrupt(app.escHelpToken))
+	if !app.escHelpVisible {
+		t.Fatal("interrupt after delay should show Esc help popup")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'b', 0)) {
+		t.Fatal("Esc+b should continue")
+	}
+	if app.escHelpVisible {
+		t.Fatal("consuming prefixed key should hide Esc help popup")
+	}
+}
+
+func TestTUIEscHelpPopupIgnoresStaleInterrupt(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("abc"))
+	app.escHelpDelay = time.Millisecond
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix")
+	}
+	token := app.escHelpToken
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'a', 0)) {
+		t.Fatal("prefixed key should consume prefix")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix again")
+	}
+	// stale token from a previous arm should not open popup
+	handleTUIInterrupt(&app, tcell.NewEventInterrupt(token))
+	if app.escHelpVisible {
+		t.Fatal("stale interrupt should not show popup")
+	}
+}
+
+func TestEscHelpPopupShowsNextLetterCommandsOnly(t *testing.T) {
+	lines := escHelpPopupLines()
+	if len(lines) == 0 {
+		t.Fatal("expected non-empty Esc help lines")
+	}
+	all := strings.Join(lines, "\n")
+	if strings.Contains(all, "Ctrl+") || strings.Contains(all, "ctrl+") {
+		t.Fatalf("Esc help should not list Ctrl sequences, got:\n%s", all)
+	}
+	if !strings.Contains(all, "  f  save + fmt/fix + reload") {
+		t.Fatalf("Esc help should list next-letter commands, got:\n%s", all)
+	}
+}
+
+func TestTUIEscPrefixCommandDoesNotSwallowNextTypedRune(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor(""))
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'b', 0)) {
+		t.Fatal("Esc+b should execute command")
+	}
+	if len(app.buffers) != 2 {
+		t.Fatalf("Esc+b should create buffer, got %d", len(app.buffers))
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'a', 0)) {
+		t.Fatal("typing should continue")
+	}
+	if got := string(app.ed.Buf); got != "a" {
+		t.Fatalf("first typed rune should not be swallowed, got %q", got)
+	}
+}
+
+func TestTUIShiftArrowsActivateSelection(t *testing.T) {
+	tests := []struct {
+		name      string
+		text      string
+		start     int
+		ev        *tcell.EventKey
+		wantCaret int
+		wantA     int
+		wantB     int
+	}{
+		{
+			name:      "shift right",
+			text:      "abc",
+			start:     1,
+			ev:        tcell.NewEventKey(tcell.KeyRight, 0, tcell.ModShift),
+			wantCaret: 2,
+			wantA:     1,
+			wantB:     2,
+		},
+		{
+			name:      "shift left",
+			text:      "abc",
+			start:     2,
+			ev:        tcell.NewEventKey(tcell.KeyLeft, 0, tcell.ModShift),
+			wantCaret: 1,
+			wantA:     1,
+			wantB:     2,
+		},
+		{
+			name:      "shift down",
+			text:      "ab\ncd\n",
+			start:     1,
+			ev:        tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModShift),
+			wantCaret: 3,
+			wantA:     0,
+			wantB:     6,
+		},
+		{
+			name:      "shift up",
+			text:      "ab\ncd\n",
+			start:     4,
+			ev:        tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModShift),
+			wantCaret: 0,
+			wantA:     0,
+			wantB:     6,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := appState{}
+			app.initBuffers(editor.NewEditor(tc.text))
+			app.ed.Caret = tc.start
+			if !handleTUIKey(&app, tc.ev) {
+				t.Fatal("shift+arrow should not quit")
+			}
+			if app.ed.Caret != tc.wantCaret {
+				t.Fatalf("caret=%d, want %d", app.ed.Caret, tc.wantCaret)
+			}
+			if !app.ed.Sel.Active {
+				t.Fatal("selection should be active")
+			}
+			gotA, gotB := app.ed.Sel.Normalised()
+			if gotA != tc.wantA || gotB != tc.wantB {
+				t.Fatalf("selection=(%d,%d), want (%d,%d)", gotA, gotB, tc.wantA, tc.wantB)
+			}
+		})
+	}
+}
+
+func TestTUIEscCSIShiftDownExtendsLineSelection(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\n"))
+	app.ed.Caret = 1
+
+	seq := []*tcell.EventKey{
+		tcell.NewEventKey(tcell.KeyEscape, 0, 0),
+		tcell.NewEventKey(tcell.KeyRune, '[', 0),
+		tcell.NewEventKey(tcell.KeyRune, '1', 0),
+		tcell.NewEventKey(tcell.KeyRune, ';', 0),
+		tcell.NewEventKey(tcell.KeyRune, '2', 0),
+		tcell.NewEventKey(tcell.KeyRune, 'B', 0),
+	}
+	for _, ev := range seq {
+		if !handleTUIKey(&app, ev) {
+			t.Fatal("CSI sequence should not quit")
+		}
+	}
+
+	if !app.ed.Sel.Active {
+		t.Fatal("selection should be active after Esc[1;2B")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 0 || b != 6 {
+		t.Fatalf("selection=(%d,%d), want (0,6)", a, b)
+	}
+	if app.ed.Caret != 3 {
+		t.Fatalf("caret=%d, want 3", app.ed.Caret)
+	}
+}
+
+func TestTUIEscCSIPlainDownMovesWithoutSelection(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\n"))
+	app.ed.Caret = 1
+
+	seq := []*tcell.EventKey{
+		tcell.NewEventKey(tcell.KeyEscape, 0, 0),
+		tcell.NewEventKey(tcell.KeyRune, '[', 0),
+		tcell.NewEventKey(tcell.KeyRune, 'B', 0),
+	}
+	for _, ev := range seq {
+		if !handleTUIKey(&app, ev) {
+			t.Fatal("CSI sequence should not quit")
+		}
+	}
+
+	if app.ed.Sel.Active {
+		t.Fatal("plain Esc[B should not activate selection")
+	}
+	if app.ed.Caret != 4 {
+		t.Fatalf("caret=%d, want 4", app.ed.Caret)
+	}
+}
+
+func TestTUIEscXLineHighlightModeAndExtend(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("l1\nl2\nl3\n"))
+	app.ed.Caret = 4 // line 2
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0)) {
+		t.Fatal("Esc+x should start line highlight mode")
+	}
+	if !app.lineHighlightMode {
+		t.Fatal("line highlight mode should be active")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 3 || b != 6 {
+		t.Fatalf("selection after Esc+x=(%d,%d), want (3,6)", a, b)
+	}
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0)) {
+		t.Fatal("x should extend line highlight")
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 3 || b != 9 {
+		t.Fatalf("selection after x=(%d,%d), want (3,9)", a, b)
+	}
+	if got := string(app.ed.Buf); got != "l1\nl2\nl3\n" {
+		t.Fatalf("x should not insert text, got %q", got)
+	}
+}
+
+func TestTUIEscSlashSearchModeAndTabNextWrap(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0)) {
+		t.Fatal("Esc+/ should start search mode")
+	}
+	if !app.searchActive {
+		t.Fatal("search mode should be active")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'h', 0)) {
+		t.Fatal("typing search query should continue")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'e', 0)) {
+		t.Fatal("typing search query should continue")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'l', 0)) {
+		t.Fatal("typing search query should continue")
+	}
+	if app.ed.Caret != 5 {
+		t.Fatalf("caret after incremental search=%d, want 5", app.ed.Caret)
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 5 || b != 8 {
+		t.Fatalf("selection after incremental search=(%d,%d), want (5,8)", a, b)
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0)) {
+		t.Fatal("slash should lock search pattern")
+	}
+	if !app.searchPatternDone {
+		t.Fatal("slash should finalize pattern entry")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyTAB, 0, 0)) {
+		t.Fatal("Tab in search mode should continue")
+	}
+	if app.ed.Caret != 15 {
+		t.Fatalf("caret after next match=%d, want 15", app.ed.Caret)
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 15 || b != 18 {
+		t.Fatalf("selection after next match=(%d,%d), want (15,18)", a, b)
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyTAB, 0, 0)) {
+		t.Fatal("Tab wrap in search mode should continue")
+	}
+	if app.ed.Caret != 5 {
+		t.Fatalf("caret after wrapped match=%d, want 5", app.ed.Caret)
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyBacktab, 0, 0)) {
+		t.Fatal("Shift+Tab in search mode should continue")
+	}
+	if app.ed.Caret != 15 {
+		t.Fatalf("caret after previous match=%d, want 15", app.ed.Caret)
+	}
+}
+
+func TestTUISearchFinalizeWithSlashThenAnyOtherRuneExitsSearchAndInserts(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("zero hello one hello two"))
+	app.ed.Caret = 0
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'h', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'e', 0)) {
+		t.Fatal("typing should continue")
+	}
+	if app.searchActive {
+		t.Fatal("typing non-tab/non-x should exit search mode")
+	}
+	if got := string(app.ed.Buf); got != "zero ehello one hello two" {
+		t.Fatalf("typed rune should be inserted after exiting search, got %q", got)
+	}
+}
+
+func TestTUISearchBeforeLockXExtendsPatternNotLineHighlight(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("xylophone xx"))
+	app.ed.Caret = 0
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0))
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0)) {
+		t.Fatal("typing x in unlocked search should continue")
+	}
+	if !app.searchActive {
+		t.Fatal("search should stay active before lock")
+	}
+	if app.searchPatternDone {
+		t.Fatal("search should not lock before slash")
+	}
+	if app.lineHighlightMode {
+		t.Fatal("x before lock must not enter line-highlight mode")
+	}
+	if got := string(app.searchQuery); got != "xx" {
+		t.Fatalf("query should keep growing before lock, got %q", got)
+	}
+}
+
+func TestTUIEmptySearchPatternRedoesLastSearch(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("a hello b hello c"))
+	app.ed.Caret = 0
+
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'h', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'e', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'l', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'l', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'o', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	if app.ed.Caret != 2 {
+		t.Fatalf("expected first match at 2, got %d", app.ed.Caret)
+	}
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0)) {
+		t.Fatal("empty pattern lock should continue")
+	}
+	if app.ed.Caret != 10 {
+		t.Fatalf("expected redo to next match at 10, got %d", app.ed.Caret)
+	}
+	if got := string(app.searchQuery); got != "hello" {
+		t.Fatalf("expected reused query 'hello', got %q", got)
+	}
+}
+
+func TestTUISearchModeXStartsLineHighlightAndNextXExtends(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("a\nhello\nb\nc\n"))
+	app.ed.Caret = 0
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'h', 0))
+	_ = handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', 0))
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0)) {
+		t.Fatal("x should continue")
+	}
+	if app.searchActive {
+		t.Fatal("x should exit search mode")
+	}
+	if !app.lineHighlightMode {
+		t.Fatal("x should enter line highlight mode")
+	}
+	a, b := app.ed.Sel.Normalised()
+	if a != 2 || b != 8 {
+		t.Fatalf("first x should mark matched line, got (%d,%d)", a, b)
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'x', 0)) {
+		t.Fatal("second x should continue")
+	}
+	a, b = app.ed.Sel.Normalised()
+	if a != 2 || b != 10 {
+		t.Fatalf("second x should extend by one line, got (%d,%d)", a, b)
+	}
+}
+
+func TestTUICtrlSlashTogglesCommentAndDoesNotStartSearch(t *testing.T) {
+	app := appState{}
+	app.initBuffers(editor.NewEditor("line\n"))
+	app.ed.Caret = 0
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, '/', tcell.ModCtrl)) {
+		t.Fatal("Ctrl+/ should continue")
+	}
+	if app.searchActive {
+		t.Fatal("Ctrl+/ should not start search mode")
+	}
+	if got := string(app.ed.Buf); got != "//line\n" {
+		t.Fatalf("Ctrl+/ should toggle comment, got %q", got)
 	}
 }
 
