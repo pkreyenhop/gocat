@@ -38,6 +38,7 @@
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
+  - Editor text storage is gap-buffer-backed; runtime code uses editor accessor methods rather than mutating internal slices directly.
   - Go buffers (`.go` path or first non-empty line starting with `package `) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings, numbers, and keywords.
   - Go buffers run syntax checking via the Go parser; lines with parse errors show a red gutter marker.
   - Markdown buffers (`.md`/`.markdown`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for headings and links.

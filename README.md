@@ -86,6 +86,7 @@ go build -o gc .
 ## Testing and Structure
 
 - Headless logic lives in `editor/` (no UI dependency). Run unit tests with `go test ./editor`.
+- The editor core stores text in a gap-buffer-backed model and exposes accessors (`Runes()`, `String()`, `RuneLen()`) instead of direct buffer field mutation.
 - Platform-neutral input/controller logic lives in `input_core.go` (`keyEvent`, `modMask`, `handleKeyEvent`, `handleTextEvent`), so frontends can reuse editing behavior independent of transport.
 - Runtime frontend is the Go TUI in `main_tui.go` (tcell).
 - Tests in `editor/editor_logic_test.go` use a small fixture helper (`run(t, buf, caret, func(*fixture))`) so new behaviour specs stay terse and UI-free. Core file helpers/scrolling/syntax/command-mode checks are in root `_test.go` files.

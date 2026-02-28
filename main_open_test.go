@@ -34,8 +34,8 @@ func TestFindMatchesAndOpenPath(t *testing.T) {
 	if err := openPath(app, matches[0]); err != nil {
 		t.Fatalf("openPath: %v", err)
 	}
-	if string(app.ed.Buf) != "hello" {
-		t.Fatalf("buffer: want %q, got %q", "hello", string(app.ed.Buf))
+	if app.ed.String() != "hello" {
+		t.Fatalf("buffer: want %q, got %q", "hello", app.ed.String())
 	}
 	if app.currentPath != path {
 		t.Fatalf("currentPath: want %s, got %s", path, app.currentPath)
@@ -71,8 +71,8 @@ func TestFilePickerListsAndLoads(t *testing.T) {
 	if err := loadFileAtCaret(app); err != nil {
 		t.Fatalf("loadFileAtCaret: %v", err)
 	}
-	if string(app.ed.Buf) != "bbb" {
-		t.Fatalf("buffer after load: want %q, got %q", "bbb", string(app.ed.Buf))
+	if app.ed.String() != "bbb" {
+		t.Fatalf("buffer after load: want %q, got %q", "bbb", app.ed.String())
 	}
 	if app.currentPath != b {
 		t.Fatalf("currentPath: want %s, got %s", b, app.currentPath)
@@ -144,8 +144,8 @@ func TestLoadStartupFilesCreatesMissing(t *testing.T) {
 	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected file to not exist until saved, err=%v", err)
 	}
-	if string(app.ed.Buf) != "" {
-		t.Fatalf("new buffer should be empty, got %q", string(app.ed.Buf))
+	if app.ed.String() != "" {
+		t.Fatalf("new buffer should be empty, got %q", app.ed.String())
 	}
 	if app.currentPath != target {
 		t.Fatalf("currentPath mismatch: %s", app.currentPath)
@@ -183,13 +183,13 @@ func TestOpenLongFileAndLeapAround(t *testing.T) {
 	// Leap to end using the last line marker
 	app.ed.Leap.LastCommit = []rune("line 34999")
 	app.ed.LeapAgain(editor.DirFwd)
-	if app.ed.Caret <= len(app.ed.Buf)/2 {
+	if app.ed.Caret <= app.ed.RuneLen()/2 {
 		t.Fatalf("expected caret near end after LeapAgain forward: %d", app.ed.Caret)
 	}
 
 	// Then leap back to the start via a new query
 	app.ed.Leap.LastCommit = []rune("line 0")
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 	app.ed.LeapAgain(editor.DirFwd) // wrap to first occurrence
 	if app.ed.Caret != 0 {
 		t.Fatalf("expected caret at start after wrap; got %d", app.ed.Caret)

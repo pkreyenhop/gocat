@@ -107,14 +107,15 @@ func showSymbolInfo(app *appState) string {
 	if app == nil || app.ed == nil {
 		return "No symbol info"
 	}
-	if bufferSyntaxKind(app, app.currentPath, app.ed.Buf) != syntaxGo {
+	buf := app.ed.Runes()
+	if bufferSyntaxKind(app, app.currentPath, buf) != syntaxGo {
 		return "Symbol info: Go mode only"
 	}
-	sym := symbolUnderCaret(app.ed.Buf, app.ed.Caret)
+	sym := symbolUnderCaret(buf, app.ed.Caret)
 	if sym == "" {
 		return "No symbol under cursor"
 	}
-	local, hasLocal := findLocalDefinition(app.ed.Buf, sym)
+	local, hasLocal := findLocalDefinition(buf, sym)
 	if info, ok := goKeywordInfo[sym]; ok {
 		out := "Go keyword " + sym + ": " + info
 		if usage, ok := goKeywordUsage[sym]; ok {
@@ -137,10 +138,10 @@ func showSymbolInfo(app *appState) string {
 	}
 	hover := ""
 	if !app.noGopls {
-		lines := editor.SplitLines(app.ed.Buf)
+		lines := editor.SplitLines(buf)
 		line := editor.CaretLineAt(lines, app.ed.Caret)
 		col := editor.CaretColAt(lines, app.ed.Caret)
-		if h, err := app.gopls.hover(app.currentPath, string(app.ed.Buf), line, col); err == nil && strings.TrimSpace(h) != "" {
+		if h, err := app.gopls.hover(app.currentPath, string(buf), line, col); err == nil && strings.TrimSpace(h) != "" {
 			hover = "Go symbol " + sym + ": " + singleLine(h)
 		}
 	}

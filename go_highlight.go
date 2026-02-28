@@ -28,11 +28,12 @@ type tsLanguageSpec struct {
 }
 
 var (
-	tsSpecsOnce sync.Once
-	tsSpecs     map[syntaxKind]*tsLanguageSpec
+	tsSpecsOnce       sync.Once
+	tsSpecs           map[syntaxKind]*tsLanguageSpec
+	captureStyleCache sync.Map
 )
 
-func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, kind syntaxKind) map[int][]tokenStyle {
+func (h *syntaxHighlighter) lineStyleForKind(path, src string, lines []string, kind syntaxKind) [][]tokenStyle {
 	if h == nil {
 		return nil
 	}
@@ -134,7 +135,7 @@ func (s *tsLanguageSpec) highlighterForKind() (*treesitter.Highlighter, error) {
 	return s.highlighter, s.initErr
 }
 
-func buildTreeSitterLineStyles(spec *tsLanguageSpec, src string, lines []string) map[int][]tokenStyle {
+func buildTreeSitterLineStyles(spec *tsLanguageSpec, src string, lines []string) [][]tokenStyle {
 	if spec == nil || len(lines) == 0 {
 		return nil
 	}
@@ -162,50 +163,60 @@ func buildTreeSitterLineStyles(spec *tsLanguageSpec, src string, lines []string)
 		applyByteStyle(styleGrid, lines, lineStartBytes, int(r.StartByte), int(r.EndByte), style, pri)
 	}
 
-	out := make(map[int][]tokenStyle, len(lines))
+	out := make([][]tokenStyle, len(lines))
+	hasAny := false
 	for i, row := range styleGrid {
 		hasStyle := false
-		styles := make([]tokenStyle, len(row))
-		for j, cell := range row {
-			styles[j] = cell.style
+		for _, cell := range row {
 			if cell.style != styleDefault {
 				hasStyle = true
+				hasAny = true
+				break
 			}
 		}
 		if hasStyle {
+			styles := make([]tokenStyle, len(row))
+			for j, cell := range row {
+				styles[j] = cell.style
+			}
 			out[i] = styles
 		}
 	}
-	if len(out) == 0 {
+	if !hasAny {
 		return nil
 	}
 	return out
 }
 
 func styleFromCapture(capture string) (tokenStyle, int) {
+	if v, ok := captureStyleCache.Load(capture); ok {
+		sp := v.(spanPriority)
+		return sp.style, sp.priority
+	}
 	name := strings.ToLower(capture)
+	sp := spanPriority{}
 	switch {
 	case strings.Contains(name, "comment"):
-		return styleComment, 90
+		sp = spanPriority{style: styleComment, priority: 90}
 	case strings.Contains(name, "string"), strings.Contains(name, "character"), strings.Contains(name, "escape"):
-		return styleString, 80
+		sp = spanPriority{style: styleString, priority: 80}
 	case strings.Contains(name, "number"), strings.Contains(name, "float"), strings.Contains(name, "integer"):
-		return styleNumber, 70
+		sp = spanPriority{style: styleNumber, priority: 70}
 	case strings.Contains(name, "function"), strings.Contains(name, "method"):
-		return styleFunction, 65
+		sp = spanPriority{style: styleFunction, priority: 65}
 	case strings.Contains(name, "type"), strings.Contains(name, "constructor"):
-		return styleType, 60
+		sp = spanPriority{style: styleType, priority: 60}
 	case strings.Contains(name, "heading"), strings.Contains(name, "title"):
-		return styleHeading, 70
+		sp = spanPriority{style: styleHeading, priority: 70}
 	case strings.Contains(name, "link"), strings.Contains(name, "url"), strings.Contains(name, "uri"):
-		return styleLink, 70
+		sp = spanPriority{style: styleLink, priority: 70}
 	case strings.Contains(name, "keyword"), strings.Contains(name, "conditional"), strings.Contains(name, "repeat"), strings.Contains(name, "exception"):
-		return styleKeyword, 60
+		sp = spanPriority{style: styleKeyword, priority: 60}
 	case strings.Contains(name, "operator"), strings.Contains(name, "punctuation"), strings.Contains(name, "delimiter"), strings.Contains(name, "bracket"):
-		return stylePunctuation, 55
-	default:
-		return styleDefault, 0
+		sp = spanPriority{style: stylePunctuation, priority: 55}
 	}
+	captureStyleCache.Store(capture, sp)
+	return sp.style, sp.priority
 }
 
 func computeLineStartBytes(src string, lineCount int) []int {

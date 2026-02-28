@@ -42,6 +42,26 @@ func TestTcellCtrlIMapsToTab(t *testing.T) {
 	}
 }
 
+func TestDrawStyledTUICellLine_TabKeepsStyleAlignment(t *testing.T) {
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer s.Fini()
+
+	base := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)
+	line := "\tif x"
+	styles := []tokenStyle{styleDefault, styleKeyword, styleKeyword, styleDefault, styleDefault}
+	drawStyledTUICellLine(s, 0, 0, line, styles, base, 0, nil)
+
+	_, _, got, _ := s.GetContent(tabWidth, 0)
+	gotFg, _, _ := got.Decompose()
+	wantFg, _, _ := tuiStyleForToken(base, styleKeyword).Decompose()
+	if gotFg != wantFg {
+		t.Fatalf("tab-aligned rune foreground=%v, want %v", gotFg, wantFg)
+	}
+}
+
 func TestTUIEscPrefixThenFInvokesFormat(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "p.go")
@@ -83,12 +103,12 @@ func TestTUIEscPrefixConsumesRuneWithoutInsertion(t *testing.T) {
 	app.initBuffers(editor.NewEditor("abc"))
 	app.ed.Caret = 1
 	app.cmdPrefixActive = true
-	before := string(app.ed.Buf)
+	before := app.ed.String()
 
 	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'z', 0)) {
 		t.Fatal("prefix rune should not quit")
 	}
-	if got := string(app.ed.Buf); got != before {
+	if got := app.ed.String(); got != before {
 		t.Fatalf("prefix rune should not insert text, got %q", got)
 	}
 	if app.cmdPrefixActive {
@@ -171,7 +191,7 @@ func TestTUIEscPrefixCommandDoesNotSwallowNextTypedRune(t *testing.T) {
 	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'a', 0)) {
 		t.Fatal("typing should continue")
 	}
-	if got := string(app.ed.Buf); got != "a" {
+	if got := app.ed.String(); got != "a" {
 		t.Fatalf("first typed rune should not be swallowed, got %q", got)
 	}
 }
@@ -327,7 +347,7 @@ func TestTUIEscXLineHighlightModeAndExtend(t *testing.T) {
 	if a != 3 || b != 9 {
 		t.Fatalf("selection after x=(%d,%d), want (3,9)", a, b)
 	}
-	if got := string(app.ed.Buf); got != "l1\nl2\nl3\n" {
+	if got := app.ed.String(); got != "l1\nl2\nl3\n" {
 		t.Fatalf("x should not insert text, got %q", got)
 	}
 }
@@ -407,7 +427,7 @@ func TestTUISearchFinalizeWithSlashThenAnyOtherRuneExitsSearchAndInserts(t *test
 	if app.searchActive {
 		t.Fatal("typing non-tab/non-x should exit search mode")
 	}
-	if got := string(app.ed.Buf); got != "zero ehello one hello two" {
+	if got := app.ed.String(); got != "zero ehello one hello two" {
 		t.Fatalf("typed rune should be inserted after exiting search, got %q", got)
 	}
 }
@@ -510,7 +530,7 @@ func TestTUICtrlSlashTogglesCommentAndDoesNotStartSearch(t *testing.T) {
 	if app.searchActive {
 		t.Fatal("Ctrl+/ should not start search mode")
 	}
-	if got := string(app.ed.Buf); got != "//line\n" {
+	if got := app.ed.String(); got != "//line\n" {
 		t.Fatalf("Ctrl+/ should toggle comment, got %q", got)
 	}
 }
@@ -522,7 +542,7 @@ func TestTUICtrlCommaPeriodMoveCaretPage(t *testing.T) {
 	}
 	app := appState{}
 	app.initBuffers(editor.NewEditor(b.String()))
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 
 	before := app.ed.Caret
 	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, ',', tcell.ModCtrl)) {
@@ -548,7 +568,7 @@ func TestTUIEscPrefixCommaPeriodMoveCaretPage(t *testing.T) {
 	}
 	app := appState{}
 	app.initBuffers(editor.NewEditor(b.String()))
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 
 	before := app.ed.Caret
 	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
@@ -645,7 +665,7 @@ func TestTUIEscShiftSSavesDirtyBuffers(t *testing.T) {
 	app.buffers[0].dirty = true
 	app.addBuffer()
 	app.buffers[1].path = two
-	app.buffers[1].ed.Buf = []rune("clean")
+	app.buffers[1].ed.SetRunes([]rune("clean"))
 	app.buffers[1].dirty = false
 	app.bufIdx = 0
 	app.syncActiveBuffer()
@@ -737,16 +757,16 @@ func TestRenderDataCachesByBufferRevision(t *testing.T) {
 	app.currentPath = "p.go"
 	app.buffers[0].path = "p.go"
 
-	lines1, _, lang1 := renderData(&app)
+	lines1, _, lang1, _ := renderData(&app)
 	if lang1 != "go" {
 		t.Fatalf("lang1=%q, want go", lang1)
 	}
-	rev1 := app.render.rev
-	if rev1 != app.buffers[0].rev {
-		t.Fatalf("cache rev mismatch: render=%d buffer=%d", rev1, app.buffers[0].rev)
+	rev1 := app.render.textRev
+	if rev1 != app.buffers[0].textRev {
+		t.Fatalf("cache text rev mismatch: render=%d buffer=%d", rev1, app.buffers[0].textRev)
 	}
 
-	lines2, _, lang2 := renderData(&app)
+	lines2, _, lang2, _ := renderData(&app)
 	if lang2 != "go" {
 		t.Fatalf("lang2=%q, want go", lang2)
 	}
@@ -756,8 +776,8 @@ func TestRenderDataCachesByBufferRevision(t *testing.T) {
 
 	app.ed.InsertText("func main() {}\n")
 	app.markDirty()
-	lines3, _, _ := renderData(&app)
-	if app.render.rev == rev1 {
+	lines3, _, _, _ := renderData(&app)
+	if app.render.textRev == rev1 {
 		t.Fatalf("expected cache rev to update after edit")
 	}
 	if len(lines3) <= len(lines2) {
@@ -787,7 +807,20 @@ func BenchmarkRenderDataCache(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			app.touchActiveBuffer()
-			_, _, _ = renderData(&app)
+			_, _, _, _ = renderData(&app)
+		}
+	})
+
+	b.Run("text-miss", func(b *testing.B) {
+		app := appState{syntaxHL: newGoHighlighter()}
+		app.initBuffers(editor.NewEditor(text))
+		app.currentPath = "bench.go"
+		app.buffers[0].path = "bench.go"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			app.touchActiveBufferText()
+			_, _, _, _ = renderData(&app)
 		}
 	})
 
@@ -796,11 +829,11 @@ func BenchmarkRenderDataCache(b *testing.B) {
 		app.initBuffers(editor.NewEditor(text))
 		app.currentPath = "bench.go"
 		app.buffers[0].path = "bench.go"
-		_, _, _ = renderData(&app)
+		_, _, _, _ = renderData(&app)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, _ = renderData(&app)
+			_, _, _, _ = renderData(&app)
 		}
 	})
 }
@@ -811,7 +844,7 @@ func TestRenderDataStartupFastSkipsHighlightOnce(t *testing.T) {
 	app.currentPath = "p.go"
 	app.buffers[0].path = "p.go"
 
-	_, styles1, lang1 := renderData(&app)
+	_, styles1, lang1, _ := renderData(&app)
 	if lang1 != "go" {
 		t.Fatalf("lang1=%q, want go", lang1)
 	}
@@ -822,7 +855,7 @@ func TestRenderDataStartupFastSkipsHighlightOnce(t *testing.T) {
 		t.Fatalf("startupFast should be consumed after first render")
 	}
 
-	_, styles2, _ := renderData(&app)
+	_, styles2, _, _ := renderData(&app)
 	if styles2 == nil {
 		t.Fatalf("expected second render to include highlighting")
 	}

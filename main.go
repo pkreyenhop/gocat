@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"gc/editor"
 )
@@ -26,15 +27,18 @@ type bufferSlot struct {
 	pickerRoot string
 	dirty      bool
 	rev        int
+	textRev    int
 	mode       syntaxKind
 }
 
 type renderCache struct {
 	bufIdx     int
-	rev        int
+	textRev    int
+	mode       syntaxKind
 	path       string
 	lines      []string
-	lineStyles map[int][]tokenStyle
+	lineStarts []int
+	lineStyles [][]tokenStyle
 	langMode   string
 }
 
@@ -127,7 +131,7 @@ type openPrompt struct {
 }
 
 func (app *appState) initBuffers(ed *editor.Editor) {
-	app.buffers = []bufferSlot{{ed: ed, rev: 1}}
+	app.buffers = []bufferSlot{{ed: ed, rev: 1, textRev: 1}}
 	app.bufIdx = 0
 	app.ed = ed
 	app.currentPath = ""
@@ -151,7 +155,7 @@ func (app *appState) syncActiveBuffer() {
 }
 
 func (app *appState) addBuffer() {
-	nb := bufferSlot{ed: editor.NewEditor(""), rev: 1}
+	nb := bufferSlot{ed: editor.NewEditor(""), rev: 1, textRev: 1}
 	if app.clipboard != nil {
 		nb.ed.SetClipboard(app.clipboard)
 	}
@@ -166,6 +170,7 @@ func (app *appState) addPickerBuffer(lines []string) {
 		picker:     true,
 		pickerRoot: app.openRoot,
 		rev:        1,
+		textRev:    1,
 		mode:       syntaxNone,
 	}
 	if app.clipboard != nil {
@@ -181,6 +186,7 @@ func (app *appState) markDirty() {
 		return
 	}
 	app.buffers[app.bufIdx].rev++
+	app.buffers[app.bufIdx].textRev++
 	app.buffers[app.bufIdx].dirty = true
 }
 
@@ -191,8 +197,20 @@ func (app *appState) touchBuffer(idx int) {
 	app.buffers[idx].rev++
 }
 
+func (app *appState) touchBufferText(idx int) {
+	if app == nil || idx < 0 || idx >= len(app.buffers) {
+		return
+	}
+	app.buffers[idx].rev++
+	app.buffers[idx].textRev++
+}
+
 func (app *appState) touchActiveBuffer() {
 	app.touchBuffer(app.bufIdx)
+}
+
+func (app *appState) touchActiveBufferText() {
+	app.touchBufferText(app.bufIdx)
 }
 
 func (app *appState) switchBuffer(delta int) {
@@ -233,7 +251,7 @@ func saveCurrent(app *appState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(string(app.ed.Buf)), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(app.ed.String()), 0644); err != nil {
 		return err
 	}
 	app.buffers[app.bufIdx].path = path
@@ -315,14 +333,14 @@ func runCurrentPackage(app *appState) error {
 	app.buffers[app.bufIdx].dirty = false
 	app.currentPath = title
 	runEd := app.ed
-	runEd.Buf = []rune(fmt.Sprintf("$ (cd %s && go run .)\n\n", dir))
-	runEd.Caret = len(runEd.Buf)
+	runEd.SetRunes([]rune(fmt.Sprintf("$ (cd %s && go run .)\n\n", dir)))
+	runEd.Caret = runEd.RuneLen()
 	runEd.Sel = editor.Sel{}
-	app.touchBuffer(runIdx)
+	app.touchBufferText(runIdx)
 
 	appendOut := func(s string) {
 		appendRunOutput(runEd, s)
-		app.touchBuffer(runIdx)
+		app.touchBufferText(runIdx)
 	}
 	onDone := func(err error) {
 		if err != nil {
@@ -377,8 +395,9 @@ func appendRunOutput(ed *editor.Editor, s string) {
 	if ed == nil || s == "" {
 		return
 	}
-	ed.Buf = append(ed.Buf, []rune(s)...)
-	ed.Caret = len(ed.Buf)
+	ed.Caret = ed.RuneLen()
+	ed.InsertText(s)
+	ed.Caret = ed.RuneLen()
 }
 
 func goFmtAndFix(path string) error {
@@ -420,17 +439,17 @@ func reloadCurrentFromDisk(app *appState) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("no path")
 	}
-	data, err := os.ReadFile(path)
+	buf, err := readFileRunes(path)
 	if err != nil {
 		return err
 	}
-	app.ed.Buf = []rune(string(data))
-	app.ed.Caret = clamp(app.ed.Caret, 0, len(app.ed.Buf))
+	app.ed.SetRunes(buf)
+	app.ed.Caret = clamp(app.ed.Caret, 0, app.ed.RuneLen())
 	app.ed.Sel = editor.Sel{}
 	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
 	app.buffers[app.bufIdx].dirty = false
 	app.buffers[app.bufIdx].path = path
-	app.touchActiveBuffer()
+	app.touchActiveBufferText()
 	return nil
 }
 
@@ -438,7 +457,7 @@ func openPath(app *appState, path string) error {
 	if app == nil || app.ed == nil || len(app.buffers) == 0 {
 		return fmt.Errorf("no active buffer")
 	}
-	data, err := os.ReadFile(path)
+	buf, err := readFileRunes(path)
 	if err != nil {
 		return err
 	}
@@ -450,12 +469,29 @@ func openPath(app *appState, path string) error {
 	app.currentPath = path
 	app.buffers[app.bufIdx].path = path
 	app.buffers[app.bufIdx].dirty = false
-	app.ed.Buf = []rune(string(data))
+	app.ed.SetRunes(buf)
 	app.ed.Caret = 0
 	app.ed.Sel = editor.Sel{}
 	app.ed.Leap = editor.LeapState{LastFoundPos: -1}
-	app.touchActiveBuffer()
+	app.touchActiveBufferText()
 	return nil
+}
+
+func readFileRunes(path string) ([]rune, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return bytesToRunes(data), nil
+}
+
+func bytesToRunes(data []byte) []rune {
+	if len(data) == 0 {
+		return nil
+	}
+	// Avoid an extra byte-to-string copy when decoding file content into runes.
+	s := unsafe.String(unsafe.SliceData(data), len(data))
+	return []rune(s)
 }
 
 func defaultPath(app *appState) string {
@@ -473,7 +509,7 @@ func loadFileAtCaret(app *appState) error {
 		return fmt.Errorf("no active buffer")
 	}
 	slot := &app.buffers[app.bufIdx]
-	lines := editor.SplitLines(app.ed.Buf)
+	lines := editor.SplitLines(app.ed.Runes())
 	lineIdx := editor.CaretLineAt(lines, app.ed.Caret)
 	if lineIdx < 0 || lineIdx >= len(lines) {
 		return fmt.Errorf("no line under caret")
@@ -501,8 +537,8 @@ func loadFileAtCaret(app *appState) error {
 		}
 		app.openRoot = up
 		slot.pickerRoot = up
-		slot.ed.Buf = []rune(strings.Join(list, "\n"))
-		app.touchActiveBuffer()
+		slot.ed.SetRunes([]rune(strings.Join(list, "\n")))
+		app.touchActiveBufferText()
 		app.currentPath = ""
 		app.ed = slot.ed
 		return nil
@@ -516,8 +552,8 @@ func loadFileAtCaret(app *appState) error {
 		}
 		app.openRoot = next
 		slot.pickerRoot = next
-		slot.ed.Buf = []rune(strings.Join(list, "\n"))
-		app.touchActiveBuffer()
+		slot.ed.SetRunes([]rune(strings.Join(list, "\n")))
+		app.touchActiveBufferText()
 		app.currentPath = ""
 		app.ed = slot.ed
 		return nil
@@ -666,9 +702,9 @@ func loadStartupFiles(app *appState, args []string) {
 		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
 			app.currentPath = abs
 			app.buffers[app.bufIdx].path = abs
-			app.ed.Buf = nil
+			app.ed.SetRunes(nil)
 			app.buffers[app.bufIdx].dirty = false
-			app.touchActiveBuffer()
+			app.touchActiveBufferText()
 			app.lastEvent = fmt.Sprintf("Buffer for %s (file will be created on save)", abs)
 			continue
 		}
@@ -730,7 +766,7 @@ func toggleComment(ed *editor.Editor) {
 	if ed == nil {
 		return
 	}
-	oldLines := editor.SplitLines(ed.Buf)
+	oldLines := editor.SplitLines(ed.Runes())
 	if len(oldLines) == 0 {
 		return
 	}
@@ -779,7 +815,7 @@ func toggleComment(ed *editor.Editor) {
 		return oldPos + cum[ln] + deltas[ln]
 	}
 
-	ed.Buf = []rune(strings.Join(lines, "\n"))
+	ed.SetRunes([]rune(strings.Join(lines, "\n")))
 	if origSel.Active {
 		ed.Sel.Active = true
 		ed.Sel.A = adjustPos(selA)
@@ -788,7 +824,7 @@ func toggleComment(ed *editor.Editor) {
 		ed.Sel.Active = false
 	}
 	ed.Caret = adjustPos(ed.Caret)
-	ed.Caret = clamp(ed.Caret, 0, len(ed.Buf))
+	ed.Caret = clamp(ed.Caret, 0, ed.RuneLen())
 }
 
 func ensureCaretVisible(app *appState, caretLine, totalLines, visibleLines int) {
@@ -893,11 +929,12 @@ func tryManualCompletion(app *appState) bool {
 	if app == nil || app.ed == nil || app.inputActive || app.open.Active || app.ed.Leap.Active {
 		return false
 	}
-	if bufferSyntaxKind(app, app.currentPath, app.ed.Buf) != syntaxGo {
+	buf := app.ed.Runes()
+	if bufferSyntaxKind(app, app.currentPath, buf) != syntaxGo {
 		return false
 	}
-	prefixStart := identPrefixStart(app.ed.Buf, app.ed.Caret)
-	prefix := string(app.ed.Buf[prefixStart:app.ed.Caret])
+	prefixStart := identPrefixStart(buf, app.ed.Caret)
+	prefix := string(buf[prefixStart:app.ed.Caret])
 	if len(prefix) < 1 {
 		return false
 	}
@@ -906,7 +943,7 @@ func tryManualCompletion(app *appState) bool {
 		applyCompletionText(app, prefixStart, kw)
 		return true
 	}
-	lines := editor.SplitLines(app.ed.Buf)
+	lines := editor.SplitLines(buf)
 	line := editor.CaretLineAt(lines, app.ed.Caret)
 	col := editor.CaretColAt(lines, app.ed.Caret)
 	if line < 0 || col < 0 {
@@ -914,7 +951,7 @@ func tryManualCompletion(app *appState) bool {
 	}
 	items := []completionItem(nil)
 	if !app.noGopls {
-		got, err := app.gopls.complete(app.currentPath, string(app.ed.Buf), line, col)
+		got, err := app.gopls.complete(app.currentPath, string(buf), line, col)
 		if err != nil {
 			app.noGopls = true
 			app.lastEvent = "Autocomplete disabled (gopls unavailable)"
@@ -932,11 +969,12 @@ func tryManualCompletion(app *appState) bool {
 
 func applyCompletionText(app *appState, prefixStart int, insertText string) {
 	insert := []rune(insertText)
-	next := make([]rune, 0, len(app.ed.Buf)-(app.ed.Caret-prefixStart)+len(insert))
-	next = append(next, app.ed.Buf[:prefixStart]...)
+	cur := app.ed.Runes()
+	next := make([]rune, 0, len(cur)-(app.ed.Caret-prefixStart)+len(insert))
+	next = append(next, cur[:prefixStart]...)
 	next = append(next, insert...)
-	next = append(next, app.ed.Buf[app.ed.Caret:]...)
-	app.ed.Buf = next
+	next = append(next, cur[app.ed.Caret:]...)
+	app.ed.SetRunes(next)
 	app.ed.Caret = prefixStart + len(insert)
 	app.markDirty()
 }
@@ -989,7 +1027,7 @@ func goKeywordFallback(prefix string) (string, bool) {
 		return "", false
 	}
 	match := ""
-	for kw := range goKeywordTokens {
+	for kw := range goCompletionKeywords {
 		if strings.HasPrefix(kw, prefix) {
 			if match != "" {
 				return "", false

@@ -92,11 +92,11 @@ func TestBufferSyntaxKindUsesForcedMode(t *testing.T) {
 	app.currentPath = "note.txt"
 	app.buffers[0].path = "note.txt"
 
-	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Buf); got != syntaxNone {
+	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Runes()); got != syntaxNone {
 		t.Fatalf("default syntax kind=%v, want text/none", got)
 	}
 	app.buffers[0].mode = syntaxGo
-	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Buf); got != syntaxGo {
+	if got := bufferSyntaxKind(&app, app.currentPath, app.ed.Runes()); got != syntaxGo {
 		t.Fatalf("forced syntax kind=%v, want go", got)
 	}
 }
@@ -119,6 +119,37 @@ func TestSyntaxHighlighterLineStyleForLanguages(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("%s: expected highlighted tokens, got none", tc.name)
 		}
+	}
+}
+
+func TestGoKeywordStyleIncludesFirstRune(t *testing.T) {
+	src := "package main\nfunc main() {\n\tif true {\n\t\tfor i := 0; i < 1; i++ {}\n\t}\n}\n"
+	lines := editor.SplitLines([]rune(src))
+	h := newGoHighlighter()
+	styles := h.lineStyleForKind("main.go", src, lines, syntaxGo)
+	if len(styles) == 0 {
+		t.Fatalf("expected non-empty styles")
+	}
+
+	lineIf := 2
+	if strings.TrimSpace(lines[lineIf])[:2] != "if" {
+		t.Fatalf("test setup: line %d does not start with if: %q", lineIf+1, lines[lineIf])
+	}
+	colIf := strings.Index(lines[lineIf], "if")
+	if colIf < 0 || colIf >= len(styles[lineIf]) {
+		t.Fatalf("if column out of range: col=%d len=%d", colIf, len(styles[lineIf]))
+	}
+	if styles[lineIf][colIf] != styleKeyword {
+		t.Fatalf("if first rune style=%v, want %v", styles[lineIf][colIf], styleKeyword)
+	}
+
+	lineFor := 3
+	colFor := strings.Index(lines[lineFor], "for")
+	if colFor < 0 || colFor >= len(styles[lineFor]) {
+		t.Fatalf("for column out of range: col=%d len=%d", colFor, len(styles[lineFor]))
+	}
+	if styles[lineFor][colFor] != styleKeyword {
+		t.Fatalf("for first rune style=%v, want %v", styles[lineFor][colFor], styleKeyword)
 	}
 }
 
@@ -193,7 +224,7 @@ func TestCycleBufferModeAndForcedGoCompletion(t *testing.T) {
 	app.initBuffers(editor.NewEditor("packa"))
 	app.currentPath = "untitled"
 	app.buffers[0].path = "untitled"
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 
 	if tryManualCompletion(&app) {
 		t.Fatalf("completion should be off in text mode")
@@ -204,7 +235,7 @@ func TestCycleBufferModeAndForcedGoCompletion(t *testing.T) {
 	if !tryManualCompletion(&app) {
 		t.Fatalf("completion should work in forced go mode")
 	}
-	if got := string(app.ed.Buf); got != "package" {
+	if got := app.ed.String(); got != "package" {
 		t.Fatalf("buf=%q, want package", got)
 	}
 }
@@ -226,14 +257,14 @@ func TestForcedGoCompletionKeywordFastPathWithoutGopls(t *testing.T) {
 	app.currentPath = "untitled"
 	app.buffers[0].path = "untitled"
 	app.buffers[0].mode = syntaxGo
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 	app.noGopls = false
 	app.gopls = nil // would panic if tryManualCompletion reached gopls
 
 	if !tryManualCompletion(&app) {
 		t.Fatalf("expected keyword completion success")
 	}
-	if got := string(app.ed.Buf); got != "package" {
+	if got := app.ed.String(); got != "package" {
 		t.Fatalf("buf=%q, want package", got)
 	}
 }
@@ -286,7 +317,7 @@ func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
 	app2 := appState{noGopls: true}
 	app2.initBuffers(editor.NewEditor("x := len(y)\n"))
 	app2.currentPath = "b.go"
-	app2.ed.Caret = strings.Index(string(app2.ed.Buf), "len") + 1
+	app2.ed.Caret = strings.Index(app2.ed.String(), "len") + 1
 	if got := showSymbolInfo(&app2); !strings.Contains(got, "Go builtin len") {
 		t.Fatalf("builtin info mismatch: %q", got)
 	} else if !strings.Contains(got, "Usage: n := len(v)") {
@@ -318,7 +349,7 @@ func TestShowSymbolInfoNonGoAndNoSymbol(t *testing.T) {
 	app2 := appState{noGopls: true}
 	app2.initBuffers(editor.NewEditor("package main\n"))
 	app2.currentPath = "a.go"
-	app2.ed.Caret = len(app2.ed.Buf)
+	app2.ed.Caret = app2.ed.RuneLen()
 	if got := showSymbolInfo(&app2); got == "" {
 		t.Fatalf("expected non-empty message")
 	}
@@ -365,11 +396,11 @@ func TestAppendRunOutput(t *testing.T) {
 	ed := editor.NewEditor("abc")
 	ed.Caret = 0
 	appendRunOutput(ed, "xyz")
-	if got := string(ed.Buf); got != "abcxyz" {
+	if got := ed.String(); got != "abcxyz" {
 		t.Fatalf("appendRunOutput buf=%q, want %q", got, "abcxyz")
 	}
-	if ed.Caret != len(ed.Buf) {
-		t.Fatalf("appendRunOutput caret=%d, want %d", ed.Caret, len(ed.Buf))
+	if ed.Caret != ed.RuneLen() {
+		t.Fatalf("appendRunOutput caret=%d, want %d", ed.Caret, ed.RuneLen())
 	}
 	appendRunOutput(nil, "noop")
 	appendRunOutput(ed, "")
@@ -406,7 +437,7 @@ func TestRunCurrentPackageOpensBufferAndStreamsOutput(t *testing.T) {
 	if len(app.buffers) != 2 {
 		t.Fatalf("expected run buffer to be added, got %d buffers", len(app.buffers))
 	}
-	got := string(app.ed.Buf)
+	got := app.ed.String()
 	if !strings.Contains(got, "$ (cd "+dir+" && go run .)") {
 		t.Fatalf("run buffer missing command header: %q", got)
 	}
@@ -443,7 +474,7 @@ func TestRunCurrentPackageUsesCwdFallback(t *testing.T) {
 	if err := runCurrentPackage(&app); err != nil {
 		t.Fatalf("runCurrentPackage err: %v", err)
 	}
-	if !strings.Contains(string(app.ed.Buf), "[exit] ok") {
-		t.Fatalf("run buffer should include ok footer, got %q", string(app.ed.Buf))
+	if !strings.Contains(app.ed.String(), "[exit] ok") {
+		t.Fatalf("run buffer should include ok footer, got %q", app.ed.String())
 	}
 }

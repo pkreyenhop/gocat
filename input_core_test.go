@@ -23,11 +23,11 @@ func TestHandleKeyEventCtrlBAddsBufferWithoutFrontendDispatch(t *testing.T) {
 func TestHandleTextEventInsertsTextWithoutFrontendDispatch(t *testing.T) {
 	app := appState{}
 	app.initBuffers(editor.NewEditor("ab"))
-	app.ed.Caret = len(app.ed.Buf)
+	app.ed.Caret = app.ed.RuneLen()
 	if !handleTextEvent(&app, "c", 0) {
 		t.Fatalf("handleTextEvent should continue running")
 	}
-	if got := string(app.ed.Buf); got != "abc" {
+	if got := app.ed.String(); got != "abc" {
 		t.Fatalf("text insert mismatch: got %q", got)
 	}
 }
@@ -51,7 +51,7 @@ func TestEscPrefixInvokesCommandAndSuppressesTextInput(t *testing.T) {
 	if !handleTextEvent(&app, "b", 0) {
 		t.Fatalf("suppressed text should continue running")
 	}
-	if got := string(app.ed.Buf); got != "" {
+	if got := app.ed.String(); got != "" {
 		t.Fatalf("suppressed text should not be inserted, got %q", got)
 	}
 }
@@ -139,7 +139,7 @@ func TestEscShiftSSavesDirtyBuffers(t *testing.T) {
 	app.buffers[0].dirty = true
 	app.addBuffer()
 	app.buffers[1].path = two
-	app.buffers[1].ed.Buf = []rune("clean")
+	app.buffers[1].ed.SetRunes([]rune("clean"))
 	app.buffers[1].dirty = false
 	app.bufIdx = 0
 	app.syncActiveBuffer()
@@ -227,7 +227,7 @@ func TestEscShiftDeleteClearsWholeBuffer(t *testing.T) {
 		t.Fatalf("esc+shift+delete should continue")
 	}
 
-	if got := string(app.ed.Buf); got != "" {
+	if got := app.ed.String(); got != "" {
 		t.Fatalf("buffer should be cleared, got %q", got)
 	}
 	if app.ed.Caret != 0 {
@@ -254,7 +254,7 @@ func TestEscPrefixCtrlCommandDoesNotDropNextText(t *testing.T) {
 	if !handleTextEvent(&app, "a", 0) {
 		t.Fatalf("text event should continue")
 	}
-	if got := string(app.ed.Buf); got != "a" {
+	if got := app.ed.String(); got != "a" {
 		t.Fatalf("first typed character should be preserved, got %q", got)
 	}
 }
@@ -286,7 +286,7 @@ func TestShiftUpDownExtendsLineSelectionForDelete(t *testing.T) {
 	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyBackspace, mods: 0}) {
 		t.Fatalf("backspace should continue")
 	}
-	if got := string(app.ed.Buf); got != "l4\n" {
+	if got := app.ed.String(); got != "l4\n" {
 		t.Fatalf("deleting line selection failed, got %q", got)
 	}
 }
@@ -337,7 +337,7 @@ func TestEscXStartsLineHighlightModeAndXExtends(t *testing.T) {
 	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyBackspace}) {
 		t.Fatalf("backspace should delete highlighted lines")
 	}
-	if got := string(app.ed.Buf); got != "l1\n" {
+	if got := app.ed.String(); got != "l1\n" {
 		t.Fatalf("buffer after delete = %q, want %q", got, "l1\n")
 	}
 }
@@ -376,7 +376,7 @@ func TestEscSlashSearchModeLiveAndTabWrap(t *testing.T) {
 	if !app.searchPatternDone {
 		t.Fatalf("slash should finalize pattern entry")
 	}
-	if got := string(app.ed.Buf); got != "zero hello one hello two" {
+	if got := app.ed.String(); got != "zero hello one hello two" {
 		t.Fatalf("search typing should not edit buffer, got %q", got)
 	}
 
@@ -422,7 +422,7 @@ func TestSearchFinalizeWithSlashThenAnyOtherRuneExitsSearchAndInserts(t *testing
 	if app.searchActive {
 		t.Fatalf("typing non-tab/non-x should exit search mode")
 	}
-	if got := string(app.ed.Buf); got != "zero ehello one hello two" {
+	if got := app.ed.String(); got != "zero ehello one hello two" {
 		t.Fatalf("typed rune should be inserted after exiting search, got %q", got)
 	}
 }
@@ -494,7 +494,7 @@ func TestCtrlSlashTogglesCommentAndDoesNotStartSearch(t *testing.T) {
 	if app.searchActive {
 		t.Fatalf("ctrl+/ should not start search mode")
 	}
-	if got := string(app.ed.Buf); got != "//line\n" {
+	if got := app.ed.String(); got != "//line\n" {
 		t.Fatalf("ctrl+/ should toggle comment, got %q", got)
 	}
 }
@@ -517,7 +517,7 @@ func TestSearchModeBackspaceCancelsAndDeletesSelection(t *testing.T) {
 	if app.searchActive {
 		t.Fatalf("backspace should cancel search mode")
 	}
-	if got := string(app.ed.Buf); got != "zerohello one hello two" {
+	if got := app.ed.String(); got != "zerohello one hello two" {
 		t.Fatalf("backspace should apply normal behavior, got %q", got)
 	}
 }
@@ -537,7 +537,7 @@ func TestSearchModeDeleteCancelsAndDeletesWordAtCaret(t *testing.T) {
 	if app.searchActive {
 		t.Fatalf("delete should cancel search mode")
 	}
-	if got := string(app.ed.Buf); got != "zero  one hello two" {
+	if got := app.ed.String(); got != "zero  one hello two" {
 		t.Fatalf("delete should apply normal behavior, got %q", got)
 	}
 }
@@ -584,7 +584,7 @@ func TestDeleteIgnoresSelectionAndDeletesWordAtCaret(t *testing.T) {
 	if !handleKeyEvent(&app, keyEvent{down: true, repeat: 0, key: keyDelete}) {
 		t.Fatalf("delete should continue")
 	}
-	if got := string(app.ed.Buf); got != "alpha  gamma" {
+	if got := app.ed.String(); got != "alpha  gamma" {
 		t.Fatalf("delete should remove word at caret, got %q", got)
 	}
 }
@@ -604,7 +604,7 @@ func TestSearchModeShiftDeleteCancelsAndDeletesLine(t *testing.T) {
 	if app.searchActive {
 		t.Fatalf("shift+delete should cancel search mode")
 	}
-	if got := string(app.ed.Buf); got != "a\nb\n" {
+	if got := app.ed.String(); got != "a\nb\n" {
 		t.Fatalf("shift+delete should apply normal behavior, got %q", got)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"gc/editor"
 
@@ -405,7 +406,7 @@ func drawTUI(s tcell.Screen, app *appState) {
 		return
 	}
 
-	lines, lineStyles, langMode := renderData(app)
+	lines, lineStyles, langMode, lineStarts := renderData(app)
 	lineH := 1
 	contentH := h - 2
 	cLine := editor.CaretLineAt(lines, app.ed.Caret)
@@ -422,8 +423,12 @@ func drawTUI(s tcell.Screen, app *appState) {
 		selA, selB := app.ed.Sel.Normalised()
 		sel = &selectionRange{a: selA, b: selB}
 	}
-	lineStarts := computeLineStarts(lines)
-
+	if lineStarts == nil {
+		lineStarts = computeLineStarts(lines)
+		if app.render.bufIdx == app.bufIdx && app.render.path == app.currentPath && len(app.render.lines) == len(lines) {
+			app.render.lineStarts = lineStarts
+		}
+	}
 	for row := 0; row < contentH; row += lineH {
 		ln := startLine + row
 		fillRow(s, row, w, base)
@@ -438,7 +443,7 @@ func drawTUI(s tcell.Screen, app *appState) {
 		drawCellText(s, 0, row, g, gutter)
 		drawStyledTUICellLine(
 			s, 5, row, lines[ln], lineStylesAt(lineStyles, ln), lineStyle,
-			lineStartsAt(lineStarts, ln), sel,
+			lineStarts[ln], sel,
 		)
 	}
 
@@ -584,42 +589,52 @@ func escHelpPopupLines() []string {
 	return out
 }
 
-func renderData(app *appState) ([]string, map[int][]tokenStyle, string) {
+func renderData(app *appState) ([]string, [][]tokenStyle, string, []int) {
 	if app == nil || app.ed == nil {
-		return []string{""}, nil, "text"
+		return []string{""}, nil, "text", nil
 	}
 	bufIdx := app.bufIdx
-	rev := 0
+	textRev := 0
 	if bufIdx >= 0 && bufIdx < len(app.buffers) {
-		rev = app.buffers[bufIdx].rev
+		textRev = app.buffers[bufIdx].textRev
 	}
 	path := app.currentPath
-	if app.render.bufIdx == bufIdx && app.render.rev == rev && app.render.path == path && len(app.render.lines) > 0 {
-		return app.render.lines, app.render.lineStyles, app.render.langMode
+	forcedMode := syntaxNone
+	if bufIdx >= 0 && bufIdx < len(app.buffers) {
+		forcedMode = app.buffers[bufIdx].mode
+	}
+	if app.render.bufIdx == bufIdx &&
+		app.render.textRev == textRev &&
+		app.render.mode == forcedMode &&
+		app.render.path == path &&
+		len(app.render.lines) > 0 {
+		return app.render.lines, app.render.lineStyles, app.render.langMode, app.render.lineStarts
 	}
 
-	lines := editor.SplitLines(app.ed.Buf)
+	lines := editor.SplitLines(app.ed.Runes())
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
-	kind := bufferSyntaxKind(app, path, app.ed.Buf)
+	buf := app.ed.Runes()
+	kind := bufferSyntaxKind(app, path, buf)
 	if app.startupFast {
 		app.startupFast = false
 		langMode := syntaxKindLabel(kind)
-		return lines, nil, langMode
+		return lines, nil, langMode, nil
 	}
-	src := string(app.ed.Buf)
+	src := string(buf)
 	lineStyles := app.syntaxHL.lineStyleForKind(path, src, lines, kind)
 	langMode := syntaxKindLabel(kind)
 	app.render = renderCache{
 		bufIdx:     bufIdx,
-		rev:        rev,
+		textRev:    textRev,
+		mode:       forcedMode,
 		path:       path,
 		lines:      lines,
 		lineStyles: lineStyles,
 		langMode:   langMode,
 	}
-	return lines, lineStyles, langMode
+	return lines, lineStyles, langMode, nil
 }
 
 func drawCellText(s tcell.Screen, x, y int, text string, st tcell.Style) {
@@ -646,18 +661,11 @@ func fillRow(s tcell.Screen, y, w int, st tcell.Style) {
 	}
 }
 
-func lineStylesAt(all map[int][]tokenStyle, i int) []tokenStyle {
-	if all == nil {
+func lineStylesAt(all [][]tokenStyle, i int) []tokenStyle {
+	if all == nil || i < 0 || i >= len(all) {
 		return nil
 	}
 	return all[i]
-}
-
-func lineStartsAt(starts []int, i int) int {
-	if i < 0 || i >= len(starts) {
-		return 0
-	}
-	return starts[i]
 }
 
 func computeLineStarts(lines []string) []int {
@@ -668,7 +676,7 @@ func computeLineStarts(lines []string) []int {
 	pos := 0
 	for i := range lines {
 		out[i] = pos
-		pos += len([]rune(lines[i])) + 1
+		pos += utf8.RuneCountInString(lines[i]) + 1
 	}
 	return out
 }
@@ -687,10 +695,14 @@ func drawStyledTUICellLine(
 	lineStart int,
 	sel *selectionRange,
 ) {
-	runes := []rune(line)
 	visual := 0
-	for i, r := range runes {
-		st := tuiStyleForToken(base, styleAt(style, i))
+	i := 0
+	for _, r := range line {
+		ts := styleDefault
+		if i >= 0 && i < len(style) {
+			ts = style[i]
+		}
+		st := tuiStyleForToken(base, ts)
 		if sel != nil {
 			abs := lineStart + i
 			if abs >= sel.a && abs < sel.b {
@@ -703,18 +715,13 @@ func drawStyledTUICellLine(
 				s.SetContent(x+visual, y, ' ', nil, st)
 				visual++
 			}
+			i++
 			continue
 		}
 		s.SetContent(x+visual, y, r, nil, st)
 		visual++
+		i++
 	}
-}
-
-func styleAt(s []tokenStyle, i int) tokenStyle {
-	if i < 0 || i >= len(s) {
-		return styleDefault
-	}
-	return s[i]
 }
 
 func tuiStyleForToken(base tcell.Style, ts tokenStyle) tcell.Style {

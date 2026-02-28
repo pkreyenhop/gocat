@@ -32,7 +32,7 @@ type syntaxHighlighter struct {
 	lastSource string
 	lastLines  int
 	lastKind   syntaxKind
-	lineStyles map[int][]tokenStyle
+	lineStyles [][]tokenStyle
 }
 
 func newGoHighlighter() *syntaxHighlighter {
@@ -66,32 +66,4 @@ func detectSyntax(path, src string) syntaxKind {
 		return syntaxNone
 	}
 	return syntaxNone
-}
-
-var goKeywordTokens = map[string]struct{}{
-	"break":       {},
-	"case":        {},
-	"chan":        {},
-	"const":       {},
-	"continue":    {},
-	"default":     {},
-	"defer":       {},
-	"else":        {},
-	"fallthrough": {},
-	"for":         {},
-	"func":        {},
-	"go":          {},
-	"goto":        {},
-	"if":          {},
-	"import":      {},
-	"interface":   {},
-	"map":         {},
-	"package":     {},
-	"range":       {},
-	"return":      {},
-	"select":      {},
-	"struct":      {},
-	"switch":      {},
-	"type":        {},
-	"var":         {},
 }

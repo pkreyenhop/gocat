@@ -1,7 +1,10 @@
 // Package editor provides headless editing and Canon-Cat-inspired Leap logic.
 package editor
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 type Dir int
 
@@ -49,7 +52,9 @@ type Clipboard interface {
 
 // Editor holds buffer state, caret/selection, Leap state, and clipboard.
 type Editor struct {
-	Buf   []rune
+	buf   gapBuffer
+	snap  []rune
+	dirty bool
 	Caret int
 	Sel   Sel
 	Leap  LeapState
@@ -68,10 +73,42 @@ type undoState struct {
 }
 
 func NewEditor(initial string) *Editor {
+	rs := []rune(initial)
 	return &Editor{
-		Buf:  []rune(initial),
+		buf:  newGapBufferNoCopy(rs),
+		snap: rs,
 		Leap: LeapState{LastFoundPos: -1},
 	}
+}
+
+func (e *Editor) RuneLen() int {
+	return e.buf.Len()
+}
+
+func (e *Editor) Runes() []rune {
+	if e == nil {
+		return nil
+	}
+	if e.dirty {
+		e.snap = e.buf.Runes()
+		e.dirty = false
+	}
+	return e.snap
+}
+
+func (e *Editor) String() string {
+	return string(e.Runes())
+}
+
+func (e *Editor) RuneAt(i int) (rune, bool) {
+	return e.buf.RuneAt(i)
+}
+
+func (e *Editor) SetRunes(rs []rune) {
+	e.buf = newGapBufferNoCopy(rs)
+	e.snap = rs
+	e.dirty = false
+	e.Caret = clamp(e.Caret, 0, e.RuneLen())
 }
 
 // SetClipboard injects a clipboard implementation.
@@ -146,7 +183,7 @@ func (e *Editor) leapSearch() {
 	// Canon Cat feel: refine anchored at origin
 	start := e.Leap.OriginCaret
 
-	if pos, ok := FindInDir(e.Buf, e.Leap.Query, start, e.Leap.Dir, true /*wrap*/); ok {
+	if pos, ok := FindInDir(e.Runes(), e.Leap.Query, start, e.Leap.Dir, true /*wrap*/); ok {
 		e.Caret = pos
 		e.Leap.LastFoundPos = pos
 	} else {
@@ -172,12 +209,12 @@ func (e *Editor) LeapAgain(dir Dir) {
 	// Start after/before caret to get "next" behaviour.
 	start := e.Caret
 	if dir == DirFwd {
-		start = min(len(e.Buf), e.Caret+1)
+		start = min(e.RuneLen(), e.Caret+1)
 	} else {
 		start = max(0, e.Caret-1)
 	}
 
-	if pos, ok := FindInDir(e.Buf, q, start, dir, true /*wrap*/); ok {
+	if pos, ok := FindInDir(e.Runes(), q, start, dir, true /*wrap*/); ok {
 		e.Caret = pos
 	}
 }
@@ -196,9 +233,10 @@ func (e *Editor) InsertText(text string) {
 	if len(rs) == 0 {
 		return
 	}
-	e.Caret = clamp(e.Caret, 0, len(e.Buf))
-	e.Buf = append(e.Buf[:e.Caret], append(rs, e.Buf[e.Caret:]...)...)
+	e.Caret = clamp(e.Caret, 0, e.RuneLen())
+	e.insertRunesAt(e.Caret, rs)
 	e.Caret += len(rs)
+	e.dirty = true
 }
 
 func (e *Editor) BackspaceOrDeleteSelection(isBackspace bool) {
@@ -207,22 +245,24 @@ func (e *Editor) BackspaceOrDeleteSelection(isBackspace bool) {
 		e.deleteSelection()
 		return
 	}
-	if len(e.Buf) == 0 {
+	if e.RuneLen() == 0 {
 		return
 	}
 	if isBackspace {
 		if e.Caret <= 0 {
 			return
 		}
-		e.Buf = append(e.Buf[:e.Caret-1], e.Buf[e.Caret:]...)
+		e.deleteRange(e.Caret-1, e.Caret)
 		e.Caret--
+		e.dirty = true
 		return
 	}
 	// delete forward
-	if e.Caret >= len(e.Buf) {
+	if e.Caret >= e.RuneLen() {
 		return
 	}
-	e.Buf = append(e.Buf[:e.Caret], e.Buf[e.Caret+1:]...)
+	e.deleteRange(e.Caret, e.Caret+1)
+	e.dirty = true
 }
 
 // DeleteWordAtCaret removes the word under the caret (letters/digits/underscore).
@@ -234,18 +274,23 @@ func (e *Editor) DeleteWordAtCaret() bool {
 	isWord := func(r rune) bool {
 		return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 	}
+	at := func(i int) rune {
+		r, _ := e.buf.RuneAt(i)
+		return r
+	}
 	e.recordUndo()
 	if e.Sel.Active {
 		e.deleteSelection()
 		return true
 	}
-	if len(e.Buf) == 0 || e.Caret >= len(e.Buf) {
+	n := e.RuneLen()
+	if n == 0 || e.Caret >= n {
 		if e.Caret == 0 {
 			return false
 		}
 		// At or past the end: skip trailing non-word run, then delete the word to the left.
 		idx := e.Caret - 1
-		for idx >= 0 && !isWord(e.Buf[idx]) {
+		for idx >= 0 && !isWord(at(idx)) {
 			idx--
 		}
 		if idx < 0 {
@@ -253,39 +298,43 @@ func (e *Editor) DeleteWordAtCaret() bool {
 		}
 		end := idx + 1
 		start := idx
-		for start > 0 && isWord(e.Buf[start-1]) {
+		for start > 0 && isWord(at(start-1)) {
 			start--
 		}
-		e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+		e.deleteRange(start, end)
 		e.Caret = start
+		e.dirty = true
 		return true
 	}
-	r := e.Buf[e.Caret]
+	r := at(e.Caret)
 	if !isWord(r) {
 		// If caret is on whitespace right after a word, delete that word instead.
-		if unicode.IsSpace(r) && e.Caret > 0 && isWord(e.Buf[e.Caret-1]) {
+		if unicode.IsSpace(r) && e.Caret > 0 && isWord(at(e.Caret-1)) {
 			start := e.Caret - 1
-			for start > 0 && isWord(e.Buf[start-1]) {
+			for start > 0 && isWord(at(start-1)) {
 				start--
 			}
 			end := e.Caret
-			e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+			e.deleteRange(start, end)
 			e.Caret = start
+			e.dirty = true
 			return true
 		}
-		e.Buf = append(e.Buf[:e.Caret], e.Buf[e.Caret+1:]...)
+		e.deleteRange(e.Caret, e.Caret+1)
+		e.dirty = true
 		return true
 	}
 	start := e.Caret
-	for start > 0 && isWord(e.Buf[start-1]) {
+	for start > 0 && isWord(at(start-1)) {
 		start--
 	}
 	end := e.Caret
-	for end < len(e.Buf) && isWord(e.Buf[end]) {
+	for end < n && isWord(at(end)) {
 		end++
 	}
-	e.Buf = append(e.Buf[:start], e.Buf[end:]...)
+	e.deleteRange(start, end)
 	e.Caret = start
+	e.dirty = true
 	return true
 }
 
@@ -295,7 +344,7 @@ func (e *Editor) DeleteLineAtCaret() bool {
 		return false
 	}
 	e.recordUndo()
-	lines := SplitLines(e.Buf)
+	lines := SplitLines(e.Runes())
 	if len(lines) == 0 {
 		return false
 	}
@@ -305,9 +354,9 @@ func (e *Editor) DeleteLineAtCaret() bool {
 	}
 	start := 0
 	for i := range lineIdx {
-		start += len([]rune(lines[i])) + 1
+		start += utf8.RuneCountInString(lines[i]) + 1
 	}
-	end := start + len([]rune(lines[lineIdx]))
+	end := start + utf8.RuneCountInString(lines[lineIdx])
 	// remove newline if not last line
 	if lineIdx < len(lines)-1 {
 		end++
@@ -315,29 +364,31 @@ func (e *Editor) DeleteLineAtCaret() bool {
 	if end < start {
 		return false
 	}
-	if start > len(e.Buf) {
-		start = len(e.Buf)
+	if start > e.RuneLen() {
+		start = e.RuneLen()
 	}
-	if end > len(e.Buf) {
-		end = len(e.Buf)
+	if end > e.RuneLen() {
+		end = e.RuneLen()
 	}
-	e.Buf = append(e.Buf[:start], e.Buf[end:]...)
-	e.Caret = clamp(start, 0, len(e.Buf))
+	e.deleteRange(start, end)
+	e.Caret = clamp(start, 0, e.RuneLen())
 	e.Sel.Active = false
+	e.dirty = true
 	return true
 }
 
 func (e *Editor) deleteSelection() {
 	a, b := e.Sel.Normalised()
-	a = clamp(a, 0, len(e.Buf))
-	b = clamp(b, 0, len(e.Buf))
+	a = clamp(a, 0, e.RuneLen())
+	b = clamp(b, 0, e.RuneLen())
 	if a == b {
 		e.Sel.Active = false
 		return
 	}
-	e.Buf = append(e.Buf[:a], e.Buf[b:]...)
+	e.deleteRange(a, b)
 	e.Caret = a
 	e.Sel.Active = false
+	e.dirty = true
 }
 
 // Undo restores the most recent recorded state (single-step).
@@ -347,15 +398,16 @@ func (e *Editor) Undo() {
 	}
 	last := e.undo[len(e.undo)-1]
 	e.undo = e.undo[:len(e.undo)-1]
-	e.Buf = append([]rune(nil), last.buf...)
+	e.SetRunes(last.buf)
 	e.Caret = last.caret
 	e.Sel = last.sel
 	e.Leap = LeapState{LastFoundPos: -1}
 }
 
 func (e *Editor) recordUndo() {
+	cur := e.buf.Runes()
 	snap := undoState{
-		buf:   append([]rune(nil), e.Buf...),
+		buf:   cur,
 		caret: e.Caret,
 		sel:   e.Sel,
 	}
@@ -367,7 +419,7 @@ func (e *Editor) recordUndo() {
 
 func (e *Editor) MoveCaret(delta int, extendSelection bool) {
 	e.lineSelActive = false
-	newPos := clamp(e.Caret+delta, 0, len(e.Buf))
+	newPos := clamp(e.Caret+delta, 0, e.RuneLen())
 	if extendSelection {
 		if !e.Sel.Active {
 			e.Sel.Active = true
@@ -391,12 +443,12 @@ func (e *Editor) MoveCaretLine(lines []string, deltaLines int, extendSelection b
 	curLine, curCol := LineColForPos(lines, e.Caret)
 	targetLine := clamp(curLine+deltaLines, 0, len(lines)-1)
 	// Clamp col to target line length
-	targetCol := min(curCol, len([]rune(lines[targetLine])))
+	targetCol := min(curCol, utf8.RuneCountInString(lines[targetLine]))
 
 	// Compute new caret absolute position
 	pos := 0
 	for i := range targetLine {
-		pos += len([]rune(lines[i])) + 1 // include newline
+		pos += utf8.RuneCountInString(lines[i]) + 1 // include newline
 	}
 	pos += targetCol
 
@@ -428,7 +480,7 @@ func (e *Editor) MoveCaretLineByLine(lines []string, deltaLines int) {
 	from := min(e.lineSelAnchorLine, targetLine)
 	to := max(e.lineSelAnchorLine, targetLine)
 	selA := lineStartPos(lines, from)
-	selB := lineEndExclusivePos(lines, to, len(e.Buf))
+	selB := lineEndExclusivePos(lines, to, e.RuneLen())
 	e.Sel.Active = true
 	e.Sel.A = selA
 	e.Sel.B = selB
@@ -458,7 +510,7 @@ func (e *Editor) CaretToLineEdge(lines []string, toEnd bool, extendSelection boo
 	}
 	targetCol := 0
 	if toEnd {
-		targetCol = len([]rune(lines[lineIdx]))
+		targetCol = utf8.RuneCountInString(lines[lineIdx])
 	}
 	e.moveCaretTo(lineIdx, targetCol, lines, extendSelection)
 }
@@ -472,7 +524,7 @@ func (e *Editor) CaretToBufferEdge(lines []string, toEnd bool, extendSelection b
 	targetCol := 0
 	if toEnd {
 		targetLine = len(lines) - 1
-		targetCol = len([]rune(lines[targetLine]))
+		targetCol = utf8.RuneCountInString(lines[targetLine])
 	}
 	e.moveCaretTo(targetLine, targetCol, lines, extendSelection)
 }
@@ -487,7 +539,7 @@ func (e *Editor) moveCaretTo(lineIdx int, col int, lines []string, extendSelecti
 	}
 	pos := 0
 	for i := 0; i < lineIdx; i++ {
-		pos += len([]rune(lines[i])) + 1
+		pos += utf8.RuneCountInString(lines[i]) + 1
 	}
 	pos += col
 
@@ -517,7 +569,7 @@ func lineStartPos(lines []string, lineIdx int) int {
 	}
 	pos := 0
 	for i := 0; i < lineIdx; i++ {
-		pos += len([]rune(lines[i])) + 1
+		pos += utf8.RuneCountInString(lines[i]) + 1
 	}
 	return pos
 }
@@ -542,7 +594,7 @@ func (e *Editor) KillToLineEnd(lines []string) {
 	if lineIdx < 0 || lineIdx >= len(lines) {
 		return
 	}
-	lineLen := len([]rune(lines[lineIdx]))
+	lineLen := utf8.RuneCountInString(lines[lineIdx])
 	// At end of last line: nothing to kill.
 	if lineIdx == len(lines)-1 && col == lineLen {
 		e.Sel.Active = false
@@ -554,10 +606,11 @@ func (e *Editor) KillToLineEnd(lines []string) {
 	if lineIdx < len(lines)-1 {
 		target++
 	}
-	if target > pos && target <= len(e.Buf) {
-		e.Buf = append(e.Buf[:pos], e.Buf[target:]...)
+	if target > pos && target <= e.RuneLen() {
+		e.deleteRange(pos, target)
 	}
 	e.Sel.Active = false
+	e.dirty = true
 }
 
 func (e *Editor) CopySelection() {
@@ -565,12 +618,12 @@ func (e *Editor) CopySelection() {
 		return
 	}
 	a, b := e.Sel.Normalised()
-	a = clamp(a, 0, len(e.Buf))
-	b = clamp(b, 0, len(e.Buf))
+	a = clamp(a, 0, e.RuneLen())
+	b = clamp(b, 0, e.RuneLen())
 	if a == b {
 		return
 	}
-	_ = e.clip.SetText(string(e.Buf[a:b]))
+	_ = e.clip.SetText(string(e.buf.Slice(a, b)))
 }
 
 func (e *Editor) CutSelection() {
@@ -631,7 +684,15 @@ func LineColForPos(lines []string, pos int) (int, int) {
 		return 0, 0
 	}
 	last := len(lines) - 1
-	return last, len([]rune(lines[last]))
+	return last, utf8.RuneCountInString(lines[last])
+}
+
+func (e *Editor) insertRunesAt(pos int, rs []rune) {
+	e.buf.Insert(pos, rs)
+}
+
+func (e *Editor) deleteRange(start, end int) {
+	e.buf.Delete(start, end)
 }
 
 func CaretLineAt(lines []string, caret int) int {

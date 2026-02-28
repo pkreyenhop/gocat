@@ -4,6 +4,8 @@
 
 Gocat (“gc”) nods to GoCat and is inspired by the Canon Cat, Helix, acme, AMP, and Emacs. It pairs a Go TUI frontend (tcell) with a headless editing core, focusing on fast “Leap” navigation, multi-buffer workflows, and keyboard-centric shortcuts.
 
+The headless editor now uses a gap-buffer-backed text model for editing performance; app/runtime code reads text via `Runes()`/`String()` and length via `RuneLen()`.
+
 ## Launching
 
 ```sh

@@ -64,14 +64,14 @@ const (
 	DirFwd  Dir = 1
 )
 type Editor struct {
-	Buf   []rune
 	Caret int
 	Sel   Sel
 	Leap  LeapState
 
 	// Has unexported fields.
 }
-    Editor holds buffer state, caret/selection, Leap state, and clipboard.
+    Editor holds caret/selection state, Leap state, clipboard, and internal
+    gap-buffer-backed text storage.
 
 func NewEditor(initial string) *Editor
 
@@ -124,8 +124,18 @@ func (e *Editor) MoveCaretPage(lines []string, pageLines int, dir Dir, extendSel
 
 func (e *Editor) PasteClipboard()
 
+func (e *Editor) RuneAt(i int) (rune, bool)
+
+func (e *Editor) RuneLen() int
+
+func (e *Editor) Runes() []rune
+
+func (e *Editor) SetRunes(rs []rune)
+
 func (e *Editor) SetClipboard(c Clipboard)
     SetClipboard injects a clipboard implementation.
+
+func (e *Editor) String() string
 
 func (e *Editor) Undo()
     Undo restores the most recent recorded state (single-step).

@@ -23,7 +23,7 @@ func TestFindInDir_Forward_NoWrap(t *testing.T) {
 	hay := []rune("abc abc abc")
 	needle := []rune("abc")
 
-	// Start at 1 -> first match at 4
+	// Start at 1; first match at 4.
 	pos, ok := FindInDir(hay, needle, 1, DirFwd, false)
 	if !ok || pos != 4 {
 		t.Fatalf("expected ok=true pos=4, got ok=%v pos=%d", ok, pos)
@@ -84,7 +84,7 @@ func TestFindInDir_IgnoresCase(t *testing.T) {
 func TestDeleteWordAtCaretEdgeCases(t *testing.T) {
 	run(t, "abc!", 4, func(f *fixture) {
 		// Caret at end should delete word to the left.
-		f.ed.Caret = len(f.ed.Buf)
+		f.ed.Caret = f.ed.RuneLen()
 		if !f.ed.DeleteWordAtCaret() {
 			f.t.Fatal("expected delete at end to succeed")
 		}
@@ -219,12 +219,12 @@ func TestMoveCaretLineUpDown(t *testing.T) {
 	// Up/Down moves by whole lines while clamping column and respects selection extension.
 	run(t, "abc\ndef\ng", 4, func(f *fixture) {
 		// caret at line 1, col 0 (buffer position 4)
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.MoveCaretLine(lines, 1, false) // down
-		f.expectCaret(8)                    // line 2 len=1 -> pos 8
+		f.expectCaret(8)                    // line 2 len=1; pos 8
 
 		// extend selection upward
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.MoveCaretLine(lines, -1, true)
 		f.expectCaret(4)
 		f.expectSelection(true, 4, 8)
@@ -233,17 +233,17 @@ func TestMoveCaretLineUpDown(t *testing.T) {
 
 func TestMoveCaretLineByLineExtendsWholeLines(t *testing.T) {
 	run(t, "ab\ncd\nef\n", 1, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.MoveCaretLineByLine(lines, 1)
 		f.expectCaret(3)
 		f.expectSelection(true, 0, 6)
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.MoveCaretLineByLine(lines, 1)
 		f.expectCaret(6)
 		f.expectSelection(true, 0, 9)
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.MoveCaretLineByLine(lines, -1)
 		f.expectCaret(3)
 		f.expectSelection(true, 0, 6)
@@ -253,7 +253,7 @@ func TestMoveCaretLineByLineExtendsWholeLines(t *testing.T) {
 func TestMoveCaretPage(t *testing.T) {
 	buf := "l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n"
 	run(t, buf, 0, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.MoveCaretPage(lines, 5, DirFwd, false)
 		// After 5 lines down, caret should be at start of line 5 (0-indexed)
 		pos := 0
@@ -262,9 +262,9 @@ func TestMoveCaretPage(t *testing.T) {
 		}
 		f.expectCaret(pos)
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.MoveCaretPage(lines, 3, DirBack, true) // extend selection up 3 lines
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		posBack := 0
 		for i := range 2 { // back to line 2
 			posBack += len([]rune(lines[i])) + 1
@@ -276,30 +276,30 @@ func TestMoveCaretPage(t *testing.T) {
 
 func TestCaretToLineEdgesAndKill(t *testing.T) {
 	run(t, "abc\ndef\n", 4, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.CaretToLineEdge(lines, true, false)
 		f.expectCaret(7) // end of "def"
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.CaretToLineEdge(lines, false, true)
 		f.expectCaret(4)
 		f.expectSelection(true, 4, 7)
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.KillToLineEnd(lines)
 		f.expectBuffer("abc\n")
 	})
 
 	// Kill from end of last line should leave buffer unchanged
 	run(t, "hi\nthere", len("hi\nthere"), func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.KillToLineEnd(lines)
 		f.expectBuffer("hi\nthere")
 	})
 
 	// Kill from middle of line should remove newline too
 	run(t, "ab\ncd\nef", 3, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.KillToLineEnd(lines)
 		f.expectBuffer("ab\nef")
 	})
@@ -307,14 +307,14 @@ func TestCaretToLineEdgesAndKill(t *testing.T) {
 
 func TestCaretToBufferEdge(t *testing.T) {
 	run(t, "ab\ncd\nef", 3, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.CaretToBufferEdge(lines, false, false)
 		f.expectCaret(0)
 
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.CaretToBufferEdge(lines, true, true)
-		f.expectCaret(len(f.ed.Buf))
-		f.expectSelection(true, 0, len(f.ed.Buf))
+		f.expectCaret(f.ed.RuneLen())
+		f.expectSelection(true, 0, f.ed.RuneLen())
 	})
 }
 
@@ -345,21 +345,21 @@ func TestUndoNoHistoryIsSafe(t *testing.T) {
 func TestMoveCaretPageClampsWithinBuffer(t *testing.T) {
 	buf := "short\nline\n"
 	run(t, buf, 0, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.MoveCaretPage(lines, 50, DirBack, false)
 		f.expectCaret(0)
-		lines = SplitLines(f.ed.Buf)
+		lines = SplitLines(f.ed.Runes())
 		f.ed.MoveCaretPage(lines, 50, DirFwd, false)
-		f.expectCaret(len(f.ed.Buf)) // clamp to end with large page
+		f.expectCaret(f.ed.RuneLen()) // clamp to end with large page
 	})
 }
 
 func TestCaretToBufferEdgeSelectionExtends(t *testing.T) {
 	run(t, "ab\ncd\nef", 2, func(f *fixture) {
-		lines := SplitLines(f.ed.Buf)
+		lines := SplitLines(f.ed.Runes())
 		f.ed.CaretToBufferEdge(lines, true, true)
-		f.expectCaret(len(f.ed.Buf))
-		f.expectSelection(true, 2, len(f.ed.Buf))
+		f.expectCaret(f.ed.RuneLen())
+		f.expectSelection(true, 2, f.ed.RuneLen())
 	})
 }
 
@@ -427,7 +427,7 @@ func (f *fixture) expectLastCommit(want string) {
 
 func (f *fixture) expectBuffer(want string) {
 	f.t.Helper()
-	if got := string(f.ed.Buf); got != want {
+	if got := f.ed.String(); got != want {
 		f.t.Fatalf("buffer: want %q, got %q", want, got)
 	}
 }

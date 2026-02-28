@@ -195,7 +195,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	}
 	if e.down && e.repeat == 0 && app.lessMode && e.key == keySpace {
 		app.suppressTextOnce = true
-		lines := editor.SplitLines(ed.Buf)
+		lines := editor.SplitLines(ed.Runes())
 		ed.MoveCaretPage(lines, 20, editor.DirFwd, false)
 		app.lastEvent = "Less mode: paged"
 		return true
@@ -323,7 +323,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyA:
-				lines := editor.SplitLines(ed.Buf)
+				lines := editor.SplitLines(ed.Runes())
 				if (e.mods & modShift) != 0 {
 					ed.CaretToBufferEdge(lines, false, true)
 				} else {
@@ -331,7 +331,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyE:
-				lines := editor.SplitLines(ed.Buf)
+				lines := editor.SplitLines(ed.Runes())
 				if (e.mods & modShift) != 0 {
 					ed.CaretToBufferEdge(lines, true, true)
 				} else {
@@ -339,7 +339,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyK:
-				ed.KillToLineEnd(editor.SplitLines(ed.Buf))
+				ed.KillToLineEnd(editor.SplitLines(ed.Runes()))
 				app.markDirty()
 				return true
 			case keyU:
@@ -371,8 +371,8 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 			case keySlash:
 				if (e.mods & modShift) != 0 {
 					app.addBuffer()
-					app.ed.Buf = []rune(helpText())
-					app.touchActiveBuffer()
+					app.ed.SetRunes([]rune(helpText()))
+					app.touchActiveBufferText()
 					app.currentPath = ""
 					app.buffers[app.bufIdx].path = ""
 					app.lastEvent = "Opened shortcuts buffer"
@@ -384,7 +384,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				return true
 			case keyDelete:
 				if prefixed && (e.mods&modShift) != 0 {
-					ed.Buf = nil
+					ed.SetRunes(nil)
 					ed.Caret = 0
 					ed.Sel = editor.Sel{}
 					ed.Leap = editor.LeapState{LastFoundPos: -1}
@@ -414,8 +414,8 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.openRoot = listRoot
 				if len(app.buffers) > 0 && app.buffers[app.bufIdx].picker {
 					app.buffers[app.bufIdx].pickerRoot = listRoot
-					app.buffers[app.bufIdx].ed.Buf = []rune(strings.Join(list, "\n"))
-					app.touchActiveBuffer()
+					app.buffers[app.bufIdx].ed.SetRunes([]rune(strings.Join(list, "\n")))
+					app.touchActiveBufferText()
 					app.ed = app.buffers[app.bufIdx].ed
 					app.currentPath = ""
 				} else {
@@ -431,11 +431,11 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				}
 				return true
 			case keyComma:
-				lines := editor.SplitLines(ed.Buf)
+				lines := editor.SplitLines(ed.Runes())
 				ed.MoveCaretPage(lines, 20, editor.DirBack, (e.mods&modShift) != 0)
 				return true
 			case keyPeriod:
-				lines := editor.SplitLines(ed.Buf)
+				lines := editor.SplitLines(ed.Runes())
 				ed.MoveCaretPage(lines, 20, editor.DirFwd, (e.mods&modShift) != 0)
 				return true
 			case keyC:
@@ -474,7 +474,7 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 	}
 
 	if !ed.Leap.Active && e.down {
-		lines := editor.SplitLines(ed.Buf)
+		lines := editor.SplitLines(ed.Runes())
 		switch e.key {
 		case keyBackspace:
 			ed.BackspaceOrDeleteSelection(true)
@@ -581,18 +581,27 @@ func handleTextEvent(app *appState, text string, mods modMask) bool {
 		return true
 	}
 	if text == " " {
-		lines := editor.SplitLines(ed.Buf)
+		lines := editor.SplitLines(ed.Runes())
 		lineIdx := editor.CaretLineAt(lines, ed.Caret)
 		double := app.lastSpaceLn == lineIdx && time.Since(app.lastSpaceAt) < 2*time.Second
 		app.lastSpaceLn = lineIdx
 		app.lastSpaceAt = time.Now()
-		if double && ed.Caret > 0 && ed.Buf[ed.Caret-1] == ' ' {
+		if double && ed.Caret > 0 {
+			if r, ok := ed.RuneAt(ed.Caret - 1); !ok || r != ' ' {
+				double = false
+			}
+		}
+		if double {
 			ed.BackspaceOrDeleteSelection(true)
-			lines = editor.SplitLines(ed.Buf)
+			lines = editor.SplitLines(ed.Runes())
 			col := editor.CaretColAt(lines, ed.Caret)
 			lineStart := max(ed.Caret-col, 0)
 			indentEnd := lineStart
-			for indentEnd < len(ed.Buf) && (ed.Buf[indentEnd] == '\t' || ed.Buf[indentEnd] == ' ') {
+			for indentEnd < ed.RuneLen() {
+				r, ok := ed.RuneAt(indentEnd)
+				if !ok || (r != '\t' && r != ' ') {
+					break
+				}
 				indentEnd++
 			}
 			ed.Caret = indentEnd
@@ -651,7 +660,7 @@ func updateSearchMatch(app *appState) {
 		app.lastEvent = "Search: empty"
 		return
 	}
-	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, app.searchOrigin, editor.DirFwd, true)
+	pos, ok := editor.FindInDir(app.ed.Runes(), app.searchQuery, app.searchOrigin, editor.DirFwd, true)
 	if !ok {
 		app.searchLastMatch = -1
 		app.ed.Sel.Active = false
@@ -667,8 +676,8 @@ func searchNextMatch(app *appState) {
 		return
 	}
 	app.lastSearchQuery = append(app.lastSearchQuery[:0], app.searchQuery...)
-	start := min(len(app.ed.Buf), app.ed.Caret+1)
-	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, start, editor.DirFwd, true)
+	start := min(app.ed.RuneLen(), app.ed.Caret+1)
+	pos, ok := editor.FindInDir(app.ed.Runes(), app.searchQuery, start, editor.DirFwd, true)
 	if !ok {
 		app.searchLastMatch = -1
 		app.ed.Sel.Active = false
@@ -685,7 +694,7 @@ func searchPrevMatch(app *appState) {
 	}
 	app.lastSearchQuery = append(app.lastSearchQuery[:0], app.searchQuery...)
 	start := max(0, app.ed.Caret-1)
-	pos, ok := editor.FindInDir(app.ed.Buf, app.searchQuery, start, editor.DirBack, true)
+	pos, ok := editor.FindInDir(app.ed.Runes(), app.searchQuery, start, editor.DirBack, true)
 	if !ok {
 		app.searchLastMatch = -1
 		app.ed.Sel.Active = false
@@ -702,7 +711,7 @@ func applySearchMatch(app *appState, pos int) {
 	}
 	app.searchLastMatch = pos
 	app.ed.Caret = pos
-	end := min(len(app.ed.Buf), pos+len(app.searchQuery))
+	end := min(app.ed.RuneLen(), pos+len(app.searchQuery))
 	app.ed.Sel.Active = true
 	app.ed.Sel.A = pos
 	app.ed.Sel.B = end
@@ -712,7 +721,7 @@ func startLineHighlightMode(app *appState) {
 	if app == nil || app.ed == nil {
 		return
 	}
-	lines := editor.SplitLines(app.ed.Buf)
+	lines := editor.SplitLines(app.ed.Runes())
 	if len(lines) == 0 {
 		return
 	}
@@ -728,7 +737,7 @@ func extendLineHighlightMode(app *appState, delta int) {
 	if app == nil || app.ed == nil {
 		return
 	}
-	lines := editor.SplitLines(app.ed.Buf)
+	lines := editor.SplitLines(app.ed.Runes())
 	if len(lines) == 0 {
 		return
 	}
@@ -747,7 +756,7 @@ func applyLineHighlightSelection(app *appState, lines []string) {
 	from := min(app.lineHighlightAnchorLine, app.lineHighlightToLine)
 	to := max(app.lineHighlightAnchorLine, app.lineHighlightToLine)
 	selA := lineStartForSelection(lines, from)
-	selB := lineEndExclusiveForSelection(lines, to, len(app.ed.Buf))
+	selB := lineEndExclusiveForSelection(lines, to, app.ed.RuneLen())
 	app.ed.Sel.Active = true
 	app.ed.Sel.A = selA
 	app.ed.Sel.B = selB
@@ -763,7 +772,7 @@ func lineStartForSelection(lines []string, lineIdx int) int {
 	}
 	pos := 0
 	for i := 0; i < lineIdx; i++ {
-		pos += len([]rune(lines[i])) + 1
+		pos += utf8.RuneCountInString(lines[i]) + 1
 	}
 	return pos
 }

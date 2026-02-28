@@ -23,6 +23,7 @@
 - Keep logic UI-agnostic inside `editor/`; prefer injecting dependencies (e.g., clipboard) rather than reaching into TUI implementation details.
 - Naming: directions as `DirFwd`/`DirBack`, caret/selection fields as `Caret`, `Sel`, `Leap`.
 - Use `[]rune` for buffer text to preserve Unicode indexing.
+- Editor text storage is gap-buffer-backed; prefer editor APIs (`Runes`, `String`, `RuneLen`, `SetRunes`) instead of direct field access.
 - Buffers are tracked via `app.buffers`/`bufIdx`; keep UI-facing shortcuts and help text (`helpEntries`) in sync with README/RULES.
 - Esc-prefixed command shortcuts include `Esc+M` for cycling forced buffer language mode (`text/go/markdown/c/miranda`), which affects highlighting and Go-only tooling behavior in untitled buffers.
 - Esc-prefixed destructive edit includes `Esc+Shift+Delete`, which clears the active buffer contents and marks it dirty.
