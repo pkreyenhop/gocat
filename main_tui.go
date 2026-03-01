@@ -415,7 +415,12 @@ func drawTUI(s tcell.Screen, app *appState) {
 
 	base := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
 	gutter := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorDarkCyan)
+	gutterErr := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorIndianRed)
 	current := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	if app.syntaxCheck == nil {
+		app.syntaxCheck = newGoSyntaxChecker()
+	}
+	lineErrors := app.syntaxCheck.lineErrorsFor(app.currentPath, app.ed.Runes())
 	var sel *selectionRange
 	if app.ed.Sel.Active {
 		selA, selB := app.ed.Sel.Normalised()
@@ -439,6 +444,9 @@ func drawTUI(s tcell.Screen, app *appState) {
 		}
 		g := fmt.Sprintf("%4d ", ln+1)
 		drawCellText(s, 0, row, g, gutter)
+		if _, ok := lineErrors[ln]; ok {
+			s.SetContent(0, row, '!', nil, gutterErr)
+		}
 		drawStyledTUICellLine(
 			s, 5, row, lines[ln], lineStylesAt(lineStyles, ln), lineStyle,
 			lineStarts[ln], sel,
@@ -455,6 +463,7 @@ func drawTUI(s tcell.Screen, app *appState) {
 	drawCellText(s, 0, h-2, padRight(status, w), tcell.StyleDefault.Background(tcell.ColorDarkSlateBlue).Foreground(tcell.ColorWhite))
 
 	input := ""
+	inputStyle := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorGray)
 	if app.inputActive {
 		input = app.inputPrompt + app.inputValue
 	} else if app.open.Active {
@@ -463,13 +472,19 @@ func drawTUI(s tcell.Screen, app *appState) {
 		input = "Search: " + string(app.searchQuery)
 	} else if app.ed.Leap.Active {
 		input = "Leap: " + string(app.ed.Leap.Query)
+	} else if msg, ok := app.syntaxCheck.messageForLine(cLine); ok {
+		input = "Go syntax error: " + msg
+		inputStyle = tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorIndianRed)
 	} else {
 		input = "Leap: unbound in TUI | Shift+Tab buffer cycle"
 	}
-	drawCellText(s, 0, h-1, padRight(input, w), tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorGray))
+	drawCellText(s, 0, h-1, padRight(input, w), inputStyle)
 
 	if strings.TrimSpace(app.symbolInfoPopup) != "" {
 		drawTUISymbolPopup(s, app, w, h)
+	}
+	if app.completionPopup.active {
+		drawTUICompletionPopup(s, app, w, h)
 	}
 	if app.escHelpVisible {
 		drawTUIEscHelpPopup(s, w, h)
@@ -921,6 +936,10 @@ func drawTUISymbolPopup(s tcell.Screen, app *appState, w, h int) {
 	border := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightCyan)
 	title := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightYellow)
 	dim := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorSilver)
+	code := tcell.StyleDefault.
+		Background(tcell.ColorDarkSlateGray).
+		Foreground(tcell.ColorLightGreen).
+		Attributes(tcell.AttrItalic)
 
 	boxW := min(w-6, 88)
 	if boxW < 32 {
@@ -961,9 +980,21 @@ func drawTUISymbolPopup(s tcell.Screen, app *appState, w, h int) {
 	start := clamp(app.symbolInfoScroll, 0, max(0, len(lines)-1))
 	visible := popupVisibleLines(lines, start, maxLines)
 	for i := range visible {
-		drawCellText(s, x+2, y+2+i, padRight(visible[i], contentW), bg)
+		st := symbolPopupLineStyle(visible[i], bg, code)
+		drawCellText(s, x+2, y+2+i, padRight(visible[i], contentW), st)
 	}
 	drawCellText(s, x+2, y+boxH-2, padRight("Esc close", contentW), dim)
+}
+
+func symbolPopupLineStyle(line string, base, code tcell.Style) tcell.Style {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return base
+	}
+	if strings.HasPrefix(line, "    ") || strings.HasPrefix(trimmed, "Code:") || strings.HasPrefix(trimmed, "Code (") {
+		return code
+	}
+	return base
 }
 
 func popupVisibleLines(lines []string, start, maxLines int) []string {
@@ -973,4 +1004,87 @@ func popupVisibleLines(lines []string, start, maxLines int) []string {
 	start = clamp(start, 0, max(0, len(lines)-1))
 	end := min(len(lines), start+maxLines)
 	return lines[start:end]
+}
+
+func drawTUICompletionPopup(s tcell.Screen, app *appState, w, h int) {
+	if app == nil || !app.completionPopup.active || len(app.completionPopup.items) == 0 {
+		return
+	}
+	bg := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorWhite)
+	border := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightCyan)
+	title := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorLightYellow)
+	sel := tcell.StyleDefault.Background(tcell.ColorMidnightBlue).Foreground(tcell.ColorWhite)
+	dim := tcell.StyleDefault.Background(tcell.ColorDarkSlateGray).Foreground(tcell.ColorSilver)
+
+	boxW := min(w-6, 96)
+	if boxW < 44 {
+		boxW = w - 2
+	}
+	maxRows := min(len(app.completionPopup.items), 10)
+	boxH := max(6, maxRows+4)
+	boxH = min(boxH, h-2)
+	x := max(1, w-boxW-1)
+	y := max(1, h-boxH-3)
+
+	for yy := range boxH {
+		for xx := 0; xx < boxW; xx++ {
+			ch := ' '
+			st := bg
+			if yy == 0 || yy == boxH-1 || xx == 0 || xx == boxW-1 {
+				ch = '│'
+				if yy == 0 || yy == boxH-1 {
+					ch = '─'
+				}
+				if yy == 0 && xx == 0 {
+					ch = '┌'
+				} else if yy == 0 && xx == boxW-1 {
+					ch = '┐'
+				} else if yy == boxH-1 && xx == 0 {
+					ch = '└'
+				} else if yy == boxH-1 && xx == boxW-1 {
+					ch = '┘'
+				}
+				st = border
+			}
+			s.SetContent(x+xx, y+yy, ch, nil, st)
+		}
+	}
+	header := app.completionPopup.title
+	if strings.TrimSpace(header) == "" {
+		header = "Completion"
+	}
+	drawCellText(s, x+2, y+1, padRight(header, boxW-4), title)
+
+	rows := boxH - 3
+	start := 0
+	if app.completionPopup.selected >= rows {
+		start = app.completionPopup.selected - rows + 1
+	}
+	for row := 0; row < rows; row++ {
+		idx := start + row
+		if idx >= len(app.completionPopup.items) {
+			break
+		}
+		item := app.completionPopup.items[idx]
+		line := completionPopupLine(item)
+		st := bg
+		if idx == app.completionPopup.selected {
+			st = sel
+		}
+		drawCellText(s, x+2, y+2+row, padRight(line, boxW-4), st)
+	}
+	drawCellText(s, x+2, y+boxH-2, padRight("Tab/Shift+Tab choose, Enter apply, Esc cancel", boxW-4), dim)
+}
+
+func completionPopupLine(item completionItem) string {
+	label := strings.TrimSpace(item.Label)
+	if label == "" {
+		label = strings.TrimSpace(item.Insert)
+	}
+	detail := strings.TrimSpace(item.Detail)
+	detail = strings.ReplaceAll(detail, "\n", " ")
+	if detail == "" {
+		return label
+	}
+	return label + "  —  " + detail
 }

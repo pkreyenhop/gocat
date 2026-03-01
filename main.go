@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -95,8 +98,18 @@ type appState struct {
 	searchPatternDone bool
 	searchOrigin      int
 	searchLastMatch   int
+	completionPopup   completionPopupState
 	render            renderCache
 	startupFast       bool
+}
+
+type completionPopupState struct {
+	active       bool
+	title        string
+	items        []completionItem
+	selected     int
+	replaceStart int
+	replaceEnd   int
 }
 
 type helpEntry struct {
@@ -303,6 +316,12 @@ func saveAll(app *appState) error {
 
 var runFmtFix = goFmtAndFix
 var startGoRun = startGoRunProcess
+var completeGoCompletions = func(app *appState, path string, content string, line int, col int) ([]completionItem, error) {
+	if app == nil || app.gopls == nil {
+		return nil, fmt.Errorf("gopls unavailable")
+	}
+	return app.gopls.complete(path, content, line, col)
+}
 
 func formatFixReloadCurrent(app *appState) error {
 	if app == nil || app.ed == nil || len(app.buffers) == 0 {
@@ -875,25 +894,41 @@ func wrapPopupText(text string, maxChars int) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	if maxChars <= 10 {
-		return []string{text}
+	if maxChars <= 1 {
+		return []string{strings.TrimSpace(text)}
 	}
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return []string{text}
-	}
-	out := make([]string, 0, 4)
-	cur := words[0]
-	for i := 1; i < len(words); i++ {
-		w := words[i]
-		if len(cur)+1+len(w) <= maxChars {
-			cur += " " + w
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, " \t\r")
+		if line == "" {
+			out = append(out, "")
 			continue
 		}
-		out = append(out, cur)
-		cur = w
+		rs := []rune(line)
+		for len(rs) > 0 {
+			if len(rs) <= maxChars {
+				out = append(out, string(rs))
+				break
+			}
+			cut := maxChars
+			for i := maxChars; i > 0; i-- {
+				if rs[i-1] == ' ' || rs[i-1] == '\t' {
+					cut = i
+					break
+				}
+			}
+			part := strings.TrimSpace(string(rs[:cut]))
+			if part == "" {
+				part = string(rs[:maxChars])
+				rs = rs[maxChars:]
+			} else {
+				rs = rs[cut:]
+			}
+			out = append(out, part)
+			rs = []rune(strings.TrimLeft(string(rs), " \t"))
+		}
 	}
-	out = append(out, cur)
 	return out
 }
 
@@ -947,6 +982,15 @@ func tryManualCompletion(app *appState) bool {
 	if bufferSyntaxKind(app, app.currentPath, buf) != syntaxGo {
 		return false
 	}
+	if app.completionPopup.active {
+		return completionPopupApplySelection(app)
+	}
+	if tryImportedPackageNameExpansion(app, buf) {
+		return true
+	}
+	if selectorPrefix, selectorStart, selectorEnd, ok := selectorCompletionPrefix(buf, app.ed.Caret); ok {
+		return trySelectorCompletionPopup(app, buf, selectorPrefix, selectorStart, selectorEnd)
+	}
 	prefixStart := identPrefixStart(buf, app.ed.Caret)
 	prefix := string(buf[prefixStart:app.ed.Caret])
 	if len(prefix) < 1 {
@@ -965,7 +1009,7 @@ func tryManualCompletion(app *appState) bool {
 	}
 	items := []completionItem(nil)
 	if !app.noGopls {
-		got, err := app.gopls.complete(app.currentPath, string(buf), line, col)
+		got, err := completeGoCompletions(app, app.currentPath, string(buf), line, col)
 		if err != nil {
 			app.noGopls = true
 			app.lastEvent = "Autocomplete disabled (gopls unavailable)"
@@ -979,6 +1023,173 @@ func tryManualCompletion(app *appState) bool {
 		return true
 	}
 	return false
+}
+
+func tryImportedPackageNameExpansion(app *appState, buf []rune) bool {
+	prefixStart := identPrefixStart(buf, app.ed.Caret)
+	prefix := string(buf[prefixStart:app.ed.Caret])
+	if len(prefix) < 1 {
+		return false
+	}
+	names := importedPackageNames(string(buf))
+	match := ""
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			if match != "" {
+				return false
+			}
+			match = name
+		}
+	}
+	if match == "" || match == prefix {
+		return false
+	}
+	applyCompletionText(app, prefixStart, match)
+	return true
+}
+
+func selectorCompletionPrefix(buf []rune, caret int) (prefix string, start int, end int, ok bool) {
+	if caret < 0 || caret > len(buf) {
+		return "", 0, 0, false
+	}
+	end = caret
+	start = caret
+	for start > 0 && isSimpleIdentRune(buf[start-1]) {
+		start--
+	}
+	if start == 0 || buf[start-1] != '.' {
+		return "", 0, 0, false
+	}
+	pkgEnd := start - 1
+	pkgStart := pkgEnd
+	for pkgStart > 0 && isSimpleIdentRune(buf[pkgStart-1]) {
+		pkgStart--
+	}
+	if pkgStart == pkgEnd {
+		return "", 0, 0, false
+	}
+	return string(buf[pkgStart:caret]), start, end, true
+}
+
+func trySelectorCompletionPopup(app *appState, buf []rune, prefix string, start int, end int) bool {
+	lines := editor.SplitLines(buf)
+	line := editor.CaretLineAt(lines, app.ed.Caret)
+	col := editor.CaretColAt(lines, app.ed.Caret)
+	if line < 0 || col < 0 {
+		return false
+	}
+	items := []completionItem(nil)
+	if !app.noGopls {
+		got, err := completeGoCompletions(app, app.currentPath, string(buf), line, col)
+		if err != nil {
+			app.noGopls = true
+			app.lastEvent = "Autocomplete disabled (gopls unavailable)"
+			return false
+		}
+		items = got
+	}
+	if len(items) == 0 {
+		return false
+	}
+	openCompletionPopup(app, "Completions for "+prefix, items, start, end)
+	return true
+}
+
+func openCompletionPopup(app *appState, title string, items []completionItem, replaceStart, replaceEnd int) {
+	if app == nil {
+		return
+	}
+	app.completionPopup.active = true
+	app.completionPopup.title = title
+	app.completionPopup.items = append(app.completionPopup.items[:0], items...)
+	app.completionPopup.selected = 0
+	app.completionPopup.replaceStart = replaceStart
+	app.completionPopup.replaceEnd = replaceEnd
+	app.lastEvent = fmt.Sprintf("Completion: %d candidates (Tab/Shift+Tab, Enter)", len(items))
+}
+
+func closeCompletionPopup(app *appState) {
+	if app == nil {
+		return
+	}
+	app.completionPopup = completionPopupState{}
+}
+
+func completionPopupMove(app *appState, delta int) {
+	if app == nil || !app.completionPopup.active || len(app.completionPopup.items) == 0 {
+		return
+	}
+	n := len(app.completionPopup.items)
+	app.completionPopup.selected = (app.completionPopup.selected + delta + n) % n
+}
+
+func completionPopupApplySelection(app *appState) bool {
+	if app == nil || !app.completionPopup.active || len(app.completionPopup.items) == 0 {
+		return false
+	}
+	sel := app.completionPopup.selected
+	if sel < 0 || sel >= len(app.completionPopup.items) {
+		sel = 0
+	}
+	item := app.completionPopup.items[sel]
+	insert := item.Insert
+	if insert == "" {
+		insert = item.Label
+	}
+	cur := app.ed.Runes()
+	start := clamp(app.completionPopup.replaceStart, 0, len(cur))
+	end := clamp(app.completionPopup.replaceEnd, start, len(cur))
+	ins := []rune(insert)
+	next := make([]rune, 0, len(cur)-(end-start)+len(ins))
+	next = append(next, cur[:start]...)
+	next = append(next, ins...)
+	next = append(next, cur[end:]...)
+	app.ed.SetRunes(next)
+	app.ed.Caret = start + len(ins)
+	closeCompletionPopup(app)
+	app.markDirty()
+	app.lastEvent = "Completed"
+	return true
+}
+
+func importedPackageNames(src string) []string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", src, parser.ImportsOnly)
+	if err != nil || file == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(file.Imports))
+	for _, imp := range file.Imports {
+		if imp == nil || imp.Path == nil {
+			continue
+		}
+		name := ""
+		if imp.Name != nil {
+			name = strings.TrimSpace(imp.Name.Name)
+			if name == "_" || name == "." {
+				continue
+			}
+		}
+		if name == "" {
+			p := strings.Trim(imp.Path.Value, "\"")
+			name = pathpkg.Base(p)
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isSimpleIdentRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
 
 func applyCompletionText(app *appState, prefixStart int, insertText string) {

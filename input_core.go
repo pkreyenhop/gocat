@@ -136,6 +136,30 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 		}
 		e.mods |= modCtrl
 	}
+	if e.down && e.repeat == 0 && app.completionPopup.active {
+		switch e.key {
+		case keyTab:
+			if (e.mods & modShift) != 0 {
+				completionPopupMove(app, -1)
+			} else {
+				completionPopupMove(app, 1)
+			}
+			return true
+		case keyUp:
+			completionPopupMove(app, -1)
+			return true
+		case keyDown:
+			completionPopupMove(app, 1)
+			return true
+		case keyReturn, keyKpEnter:
+			return completionPopupApplySelection(app)
+		case keyEscape:
+			closeCompletionPopup(app)
+			app.lastEvent = "Completion cancelled"
+			return true
+		}
+		closeCompletionPopup(app)
+	}
 	if e.down && e.repeat == 0 && app.searchActive {
 		matched := app.searchPatternDone && searchHasActiveMatch(app)
 		switch e.key {
@@ -534,6 +558,9 @@ func handleTextEvent(app *appState, text string, mods modMask) bool {
 
 	if text == "" || !utf8.ValidString(text) {
 		return true
+	}
+	if app.completionPopup.active {
+		closeCompletionPopup(app)
 	}
 	if app.searchActive {
 		if !app.searchPatternDone {

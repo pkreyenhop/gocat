@@ -13,6 +13,7 @@ type goSyntaxChecker struct {
 	lastSource string
 	lastLines  int
 	lineErrors map[int]struct{}
+	lineMsgs   map[int]string
 }
 
 func newGoSyntaxChecker() *goSyntaxChecker {
@@ -29,6 +30,7 @@ func (c *goSyntaxChecker) lineErrorsFor(path string, buf []rune) map[int]struct{
 		c.lastSource = src
 		c.lastLines = len(splitForSyntax(src))
 		c.lineErrors = nil
+		c.lineMsgs = nil
 		return nil
 	}
 	lines := splitForSyntax(src)
@@ -39,6 +41,7 @@ func (c *goSyntaxChecker) lineErrorsFor(path string, buf []rune) map[int]struct{
 	fset := token.NewFileSet()
 	_, err := parser.ParseFile(fset, pathForParse(path), src, parser.AllErrors)
 	out := map[int]struct{}{}
+	msgs := map[int]string{}
 	if err != nil {
 		switch e := err.(type) {
 		case scanner.ErrorList:
@@ -46,22 +49,42 @@ func (c *goSyntaxChecker) lineErrorsFor(path string, buf []rune) map[int]struct{
 				ln := se.Pos.Line - 1
 				if ln >= 0 {
 					out[ln] = struct{}{}
+					if _, ok := msgs[ln]; !ok {
+						msgs[ln] = strings.TrimSpace(se.Msg)
+					}
 				}
 			}
 		default:
 			if ln, ok := parseLineFromErr(err.Error()); ok && ln >= 0 {
 				out[ln] = struct{}{}
+				if _, ok := msgs[ln]; !ok {
+					msgs[ln] = strings.TrimSpace(err.Error())
+				}
 			}
 		}
 	}
 	if len(out) == 0 {
 		out = nil
+		msgs = nil
 	}
 	c.lastPath = path
 	c.lastSource = src
 	c.lastLines = len(lines)
 	c.lineErrors = out
+	c.lineMsgs = msgs
 	return out
+}
+
+func (c *goSyntaxChecker) messageForLine(line int) (string, bool) {
+	if c == nil || line < 0 {
+		return "", false
+	}
+	msg, ok := c.lineMsgs[line]
+	msg = strings.TrimSpace(msg)
+	if !ok || msg == "" {
+		return "", false
+	}
+	return msg, true
 }
 
 func pathForParse(path string) string {

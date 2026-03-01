@@ -7,11 +7,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gc/editor"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+func screenRowText(s tcell.SimulationScreen, y, w int) string {
+	var b strings.Builder
+	for x := 0; x < w; x++ {
+		r, _, _, _ := s.GetContent(x, y)
+		if r == 0 {
+			r = ' '
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 func TestCtrlRuneToKey(t *testing.T) {
 	if got, ok := ctrlRuneToKey('q'); !ok || got != keyQ {
@@ -69,6 +82,74 @@ func TestDrawStyledTUICellLine_TabKeepsStyleAlignment(t *testing.T) {
 	wantFg, _, _ := tuiStyleForToken(base, styleKeyword).Decompose()
 	if gotFg != wantFg {
 		t.Fatalf("tab-aligned rune foreground=%v, want %v", gotFg, wantFg)
+	}
+}
+
+func TestSymbolPopupLineStyleFormatsCodeLines(t *testing.T) {
+	base := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	code := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorLightGreen).Attributes(tcell.AttrItalic)
+
+	if st := symbolPopupLineStyle("normal text", base, code); st != base {
+		t.Fatalf("normal line should use base style")
+	}
+	if st := symbolPopupLineStyle("Code (go):", base, code); st != code {
+		t.Fatalf("code header should use code style")
+	}
+	if st := symbolPopupLineStyle("    fmt.Println(x)", base, code); st != code {
+		t.Fatalf("indented code line should use code style")
+	}
+}
+
+func TestDrawTUIShowsGoSyntaxErrorMarkerInGutter(t *testing.T) {
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer s.Fini()
+	s.SetSize(80, 24)
+
+	app := appState{syntaxHL: newGoHighlighter(), syntaxCheck: newGoSyntaxChecker()}
+	app.initBuffers(editor.NewEditor("package main\nfunc main() {\n"))
+	app.currentPath = "bad.go"
+	app.buffers[0].path = "bad.go"
+
+	drawTUI(s, &app)
+
+	ch, _, st, _ := s.GetContent(0, 1)
+	if ch != '!' {
+		t.Fatalf("expected syntax marker '!' on error line, got %q", ch)
+	}
+	fg, _, _ := st.Decompose()
+	if fg != tcell.ColorIndianRed {
+		t.Fatalf("expected error marker color %v, got %v", tcell.ColorIndianRed, fg)
+	}
+}
+
+func TestDrawTUIShowsCurrentSyntaxErrorOnBottomLine(t *testing.T) {
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer s.Fini()
+	s.SetSize(80, 24)
+
+	src := "package main\nfunc main() {\n"
+	app := appState{syntaxHL: newGoHighlighter(), syntaxCheck: newGoSyntaxChecker()}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "bad.go"
+	app.buffers[0].path = "bad.go"
+	app.ed.Caret = utf8.RuneCountInString("package main\nfunc")
+
+	drawTUI(s, &app)
+
+	row := screenRowText(s, 23, 80)
+	if !strings.Contains(row, "Go syntax error:") {
+		t.Fatalf("expected bottom line syntax error message, got %q", strings.TrimSpace(row))
+	}
+	_, _, st, _ := s.GetContent(0, 23)
+	fg, _, _ := st.Decompose()
+	if fg != tcell.ColorIndianRed {
+		t.Fatalf("expected bottom line in red, got %v", fg)
 	}
 }
 

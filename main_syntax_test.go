@@ -269,6 +269,52 @@ func TestForcedGoCompletionKeywordFastPathWithoutGopls(t *testing.T) {
 	}
 }
 
+func TestImportedPackageNameExpansion(t *testing.T) {
+	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfm\n}\n"
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "a.go"
+	app.ed.Caret = strings.Index(app.ed.String(), "\tfm") + 3
+
+	if !tryManualCompletion(&app) {
+		t.Fatalf("expected import-name completion")
+	}
+	if !strings.Contains(app.ed.String(), "\tfmt\n") {
+		t.Fatalf("expected fm -> fmt expansion, got %q", app.ed.String())
+	}
+}
+
+func TestSelectorCompletionPopupAndApply(t *testing.T) {
+	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.\n}\n"
+	app := appState{}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "a.go"
+	app.ed.Caret = strings.Index(app.ed.String(), "fmt.") + len("fmt.")
+
+	oldComplete := completeGoCompletions
+	defer func() { completeGoCompletions = oldComplete }()
+	completeGoCompletions = func(_ *appState, _ string, _ string, _ int, _ int) ([]completionItem, error) {
+		return []completionItem{
+			{Label: "Print", Insert: "Print", Detail: "func Print(a ...any) (n int, err error)"},
+			{Label: "Println", Insert: "Println", Detail: "func Println(a ...any) (n int, err error)"},
+		}, nil
+	}
+
+	if !tryManualCompletion(&app) {
+		t.Fatalf("expected selector completion popup")
+	}
+	if !app.completionPopup.active || len(app.completionPopup.items) != 2 {
+		t.Fatalf("expected active popup with items, got active=%v len=%d", app.completionPopup.active, len(app.completionPopup.items))
+	}
+	completionPopupMove(&app, 1)
+	if !completionPopupApplySelection(&app) {
+		t.Fatalf("expected popup selection apply")
+	}
+	if !strings.Contains(app.ed.String(), "fmt.Println") {
+		t.Fatalf("expected selected completion to apply, got %q", app.ed.String())
+	}
+}
+
 func TestGoSyntaxCheckerLineErrors(t *testing.T) {
 	c := newGoSyntaxChecker()
 
@@ -308,9 +354,9 @@ func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
 	app.initBuffers(editor.NewEditor("package main\n"))
 	app.currentPath = "a.go"
 	app.ed.Caret = 2
-	if got := showSymbolInfo(&app); !strings.Contains(got, "Go keyword package") {
+	if got := showSymbolInfo(&app); !strings.Contains(got, "Go keyword: package") {
 		t.Fatalf("keyword info mismatch: %q", got)
-	} else if !strings.Contains(got, "Usage: package main") {
+	} else if !strings.Contains(got, "Usage:\npackage main") {
 		t.Fatalf("expected keyword usage example, got %q", got)
 	}
 
@@ -318,9 +364,9 @@ func TestShowSymbolInfoKeywordAndBuiltin(t *testing.T) {
 	app2.initBuffers(editor.NewEditor("x := len(y)\n"))
 	app2.currentPath = "b.go"
 	app2.ed.Caret = strings.Index(app2.ed.String(), "len") + 1
-	if got := showSymbolInfo(&app2); !strings.Contains(got, "Go builtin len") {
+	if got := showSymbolInfo(&app2); !strings.Contains(got, "Go builtin: len") {
 		t.Fatalf("builtin info mismatch: %q", got)
-	} else if !strings.Contains(got, "Usage: n := len(v)") {
+	} else if !strings.Contains(got, "Usage:\nn := len(v)") {
 		t.Fatalf("expected builtin usage example, got %q", got)
 	}
 }
@@ -334,6 +380,40 @@ func TestShowSymbolInfoFindsLocalDefinition(t *testing.T) {
 	got := showSymbolInfo(&app)
 	if !strings.Contains(got, "Local definition") || !strings.Contains(got, "func helper(a int) int") {
 		t.Fatalf("expected local definition info, got %q", got)
+	}
+}
+
+func TestShowSymbolInfoPackageNameAndImportSelector(t *testing.T) {
+	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "a.go"
+
+	app.ed.Caret = strings.Index(src, "main")
+	gotPkg := showSymbolInfo(&app)
+	if !strings.Contains(gotPkg, "Package declaration: main") {
+		t.Fatalf("expected package declaration info, got %q", gotPkg)
+	}
+
+	app.ed.Caret = strings.Index(src, "Println") + 2
+	gotSel := showSymbolInfo(&app)
+	if !strings.Contains(gotSel, "Package member: fmt.Println") {
+		t.Fatalf("expected imported member info, got %q", gotSel)
+	}
+	if !strings.Contains(gotSel, "Imported package: fmt (\"fmt\")") {
+		t.Fatalf("expected import package info, got %q", gotSel)
+	}
+}
+
+func TestShowSymbolInfoFindsShortVarDefinition(t *testing.T) {
+	src := "package main\n\nfunc main() {\n\tvalue := 42\n\t_ = value\n}\n"
+	app := appState{noGopls: true}
+	app.initBuffers(editor.NewEditor(src))
+	app.currentPath = "a.go"
+	app.ed.Caret = strings.LastIndex(src, "value")
+	got := showSymbolInfo(&app)
+	if !strings.Contains(got, "Local definition") || !strings.Contains(got, "value := 42") {
+		t.Fatalf("expected short var definition info, got %q", got)
 	}
 }
 
@@ -360,8 +440,29 @@ func TestWrapPopupTextAndSingleLine(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped lines, got %v", lines)
 	}
+	lines2 := wrapPopupText("Header line\n\nsecond paragraph content", 12)
+	if len(lines2) < 3 || lines2[0] != "Header line" || lines2[1] != "" {
+		t.Fatalf("expected newline-preserving wrap, got %v", lines2)
+	}
 	if got := singleLine("hello\nworld"); got != "hello world" {
 		t.Fatalf("singleLine newline flatten failed: %q", got)
+	}
+}
+
+func TestFormatHoverMarkdown(t *testing.T) {
+	in := "# Signature\n\n- `Println` writes output\nSee [fmt](https://pkg.go.dev/fmt).\n\n```go\nfmt.Println(x)\n```"
+	got := formatHoverMarkdown(in)
+	if !strings.Contains(got, "SIGNATURE") {
+		t.Fatalf("expected heading, got %q", got)
+	}
+	if !strings.Contains(got, "• \"Println\" writes output") {
+		t.Fatalf("expected bullet + inline code formatting, got %q", got)
+	}
+	if !strings.Contains(got, "fmt (https://pkg.go.dev/fmt)") {
+		t.Fatalf("expected link formatting, got %q", got)
+	}
+	if !strings.Contains(got, "Code (go):") || !strings.Contains(got, "    fmt.Println(x)") {
+		t.Fatalf("expected fenced code formatting, got %q", got)
 	}
 }
 
