@@ -19,11 +19,11 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 - **Buffer clear**: `Esc+Shift+Delete` deletes the entire contents of the active buffer.
 - **Language mode cycle**: `Esc+M` cycles language mode for the active buffer (`text -> go -> markdown -> c -> miranda -> text`). This is useful for untitled buffers (for example, force Go mode before naming the file).
 - **Less mode**: `Esc` then `Space` enters paging mode. While active, `Space` pages forward repeatedly and `Esc` exits less mode.
-- **Go autocompletion**: In Go buffers, completion runs in a non-interruptive mode. Deterministic keyword completions run first (for example, `pack` -> `package`) and return immediately without waiting for `gopls`. Other completions auto-insert only when confidence is high (identifier prefix length at least 3, exactly one `gopls` candidate, identifier-only insert text), so there is no suggestion popup. If `gopls` is unavailable, completion is automatically disabled.
+- **Go autocompletion**: In Go buffers, `Tab` first applies deterministic keyword completion (for example, `pack` -> `package`) and imported-package-name expansion (for example, `fm` -> `fmt`) when unique. For selector completion (for example, `fmt.`), `Tab` opens a completion popup with function/member signatures from `gopls`; use `Tab`/`Shift+Tab` (or arrows) to choose, `Enter` to apply, `Esc` to cancel. If you pause on a candidate, a second upper-right detail popup appears with description and formatted code examples.
 - **Clipboard**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` for copy/cut/paste via pluggable clipboard.
 - **Viewport**: The view scrolls to keep the caret on-screen while moving up or down through long files.
 - **Rendering cues**: Purple palette; status line shows mode/query/buffer, `lang=<mode>`, and `*unsaved*`; input line sits below for prompts; gutter shows line numbers (current line highlighted); caret is a blinking block; selection highlighted; active Leap match underlined. Go buffers (`.go` or `package ...`), Markdown buffers (`.md`/`.markdown`), C buffers (`.c`/`.h`), and Miranda buffers (`.m`) use a pure-Go Tree-sitter highlighter (`gotreesitter`) with no CGO dependency.
-- **Go syntax markers**: In Go mode, parse errors are checked with the Go parser, and lines with syntax errors get a red marker in the gutter.
+- **Go syntax markers**: In Go mode, parse errors are checked with the Go parser; lines with syntax errors get a red marker in the gutter, and when the caret is on an error line the bottom info line shows the current error in red.
 - **Go symbol info**: In Go mode, use `Esc` then `i` to toggle a symbol-info popup for the symbol under cursor (keyword/builtin details with usage examples, local definition lookup, and `gopls` hover fallback). Press `Esc` to close; use `Up/Down` (or `PageUp/PageDown`, `Home/End`) to scroll when needed.
 
 ## Shortcut Quick Reference
@@ -51,6 +51,7 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 | Line highlight mode | Esc+X (or x from locked search), then x to extend by line; Esc exits |
 | Less mode | Esc+Space (Space page, Esc exit) |
 | Autocomplete (Go mode) | Tab |
+| Completion chooser (Go selectors) | Tab/Shift+Tab (or Up/Down) choose, Enter apply, Esc cancel |
 | Navigation | Arrows, PageUp/Down, Ctrl+, Ctrl+. (Shift = select) |
 | Delete / line / buffer delete | Delete word under/left of caret / Shift+Delete line / Esc+Shift+Delete buffer |
 | Delete buffer contents | Esc+Shift+Delete |
@@ -72,16 +73,20 @@ go build -o gc .
 
 - Completion is enabled only when the active buffer language mode is `go`.
 - Backend: `gopls` over LSP (`stdio` JSON-RPC).
-- Trigger: pressing `Tab` in a Go buffer checks for a high-confidence completion.
-- Fast path: unique Go keyword matches complete immediately before any `gopls` request.
-- Insert behavior: when confidence is high enough, the current identifier prefix at caret is replaced automatically.
+- Trigger: pressing `Tab` in a Go buffer performs completion for the token at caret.
+- Fast paths:
+  - unique Go keyword matches complete immediately
+  - unique imported package-name prefixes complete immediately
+- Selector mode: for `pkg.`/`pkg.pref`, `Tab` opens a chooser popup with `gopls` candidates and signatures.
+- Detail mode: if a chooser item stays selected briefly, a second popup shows description and formatted examples.
+- Insert behavior: pressing `Enter` in the chooser replaces the current selector suffix.
 - If `gopls` is missing or returns errors/timeouts, completion is disabled for the session and editing continues normally.
 - When `gopls` is unavailable, `Tab` still supports deterministic Go keyword completion if the current prefix has exactly one keyword match (for example, `packa` -> `package`).
 - Current scope/limitations:
   - Go-only completion (no completion for Markdown/C/Miranda/text modes)
-  - Auto-complete only when prefix length is at least 3 and there is exactly one identifier-safe candidate (no popup choices)
+  - Popup chooser is selector-oriented (`pkg.` style) and depends on `gopls` availability
   - Basic completion items only (snippet placeholders are stripped to plain text)
-  - No hover/signature/help UI yet
+  - Detail popup content quality depends on `gopls` documentation payload
 
 ## Testing and Structure
 

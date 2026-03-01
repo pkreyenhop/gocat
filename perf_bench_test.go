@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,4 +66,45 @@ func BenchmarkOpenPathLargeFile(b *testing.B) {
 			b.Fatalf("openPath: %v", err)
 		}
 	}
+}
+
+func BenchmarkActiveBufferSyntaxErrorsCache(b *testing.B) {
+	var src strings.Builder
+	src.WriteString("package main\n\n")
+	for i := range 400 {
+		src.WriteString("func f")
+		src.WriteString(strconv.Itoa(i))
+		src.WriteString("() {}\n")
+	}
+	src.WriteString("func bad() {\n")
+	text := src.String()
+
+	makeApp := func() *appState {
+		app := &appState{syntaxCheck: newGoSyntaxChecker()}
+		app.initBuffers(editor.NewEditor(text))
+		app.currentPath = "bench.go"
+		app.buffers[0].path = "bench.go"
+		app.buffers[0].mode = syntaxGo
+		return app
+	}
+
+	b.Run("hit", func(b *testing.B) {
+		app := makeApp()
+		_, _ = activeBufferSyntaxErrors(app, syntaxGo, app.currentPath)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = activeBufferSyntaxErrors(app, syntaxGo, app.currentPath)
+		}
+	})
+
+	b.Run("miss", func(b *testing.B) {
+		app := makeApp()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			app.touchActiveBufferText()
+			_, _ = activeBufferSyntaxErrors(app, syntaxGo, app.currentPath)
+		}
+	})
 }

@@ -21,6 +21,8 @@ package main // import "."
   - Locking an empty pattern (`/`) repeats the last non-empty search and jumps to the next match.
 - `Esc+X` line-highlight mode: `x` extends highlighted lines; `Esc` exits.
 - `Esc+Space` less mode: `Space` pages forward; `Esc` exits.
+- Go selector completion popup: `Tab` on `pkg.`/`pkg.pref` opens candidates from `gopls`; `Tab`/`Shift+Tab` (or arrows) move, Enter applies, Esc cancels.
+- Completion detail popup: when selector completion selection is idle briefly, an upper-right popup shows signature/docs/examples.
 
 ### Syntax Highlighting
 

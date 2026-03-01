@@ -36,8 +36,9 @@ go build -o gc .
 - **Undo:** `Ctrl+U` (single-step).
 - **Comment toggle:** `Ctrl+/` toggles `//` on selection or current line.
 - **Clipboard:** `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
-- **Go autocompletion:** In Go buffers, completion is non-interruptive. The editor auto-completes only when there is a single high-confidence `gopls` result (prefix length at least 3 and identifier-safe insert text); no suggestion popup is shown.
+- **Go autocompletion:** In Go buffers, `Tab` first performs deterministic completion for unique keywords and unique imported package-name prefixes. For selector completion (`pkg.` / `pkg.pref`), it opens a chooser popup with `gopls` candidates and signatures.
 - **Go symbol info:** `Esc` then `i` toggles a popup with information about the symbol under cursor (keywords/builtins with usage examples, local definitions, and hover text when available). `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long content.
+- **Completion details popup:** While the selector completion popup is open, pausing on a candidate briefly opens an upper-right detail popup with description and formatted code examples.
 - **Esc command mode:** `Esc` is a command prefix for control-style actions (`Esc+f`, `Esc+Shift+S`, `Esc+Shift+Q`, `Esc+i`, `Esc+Esc`).
 - **Esc delayed help popup:** If `Esc` stays pending for a short delay, a lower-right popup appears showing grouped `Esc` commands by next letter (no `Ctrl+...` entries).
 - **Search mode:** `Esc+/` enters incremental search. Type the pattern (caret jumps to full matches while typing), then press `/` to lock the pattern. While locked, `Tab`/`Shift+Tab` move to next/previous match with wrap. If the current pattern is empty when `/` is pressed, the editor reuses the last non-empty search pattern and jumps to the next match. Any other key exits search and performs its normal action; `x` exits search and enters line-highlight mode.
@@ -50,16 +51,17 @@ go build -o gc .
 
 - **Activation:** Completion runs only in Go mode (`lang=go` in status line).
 - **Engine:** The editor starts `gopls` lazily and communicates over LSP.
-- **When it updates:** Pressing `Tab` in a Go buffer triggers a confidence check.
-- **Fast keyword path:** Unique Go keyword prefixes complete before any `gopls` request (for example, `pack` -> `package`).
-- **Accept semantics:** When confidence is high, the identifier prefix directly before the caret is replaced automatically.
-- **Failure mode:** If `gopls` is unavailable or fails, completion is disabled for that session; the editor remains fully usable.
-- **Fallback mode:** If `gopls` is unavailable, pressing `Tab` still performs deterministic Go keyword completion when there is exactly one keyword match for the current prefix.
+- **When it updates:** Pressing `Tab` in a Go buffer triggers completion for the token under the caret.
+- **Fast paths:** Unique Go keyword prefixes complete before any `gopls` request (for example, `pack` -> `package`), and unique imported package prefixes complete directly (for example, `fm` -> `fmt` when `fmt` is imported).
+- **Selector chooser:** For `pkg.` or `pkg.pref`, `Tab` opens a chooser popup; use `Tab`/`Shift+Tab` or `Up/Down` to select, `Enter` to apply, `Esc` to cancel.
+- **Details popup:** If selection stays idle briefly, a second popup appears with signature/docs/examples for the selected candidate.
+- **Failure mode:** If `gopls` is unavailable or fails, selector popup completion is disabled for that session; the editor remains fully usable.
+- **Fallback mode:** Without `gopls`, `Tab` still performs deterministic Go keyword/import-prefix completion when a unique match exists.
 - **Limitations (current):**
   - Go-only completion
-  - No completion choices/popup UI; completion only fires on a single strong candidate
+  - Popup chooser currently targets selector-style completion (`pkg.`)
   - Snippet placeholders are flattened to plain text
-  - No completion docs/hover panel yet
+  - Detail popup quality depends on docs returned by `gopls`
 
 ## Buffers & Files
 
@@ -75,6 +77,7 @@ go build -o gc .
 
 - **Status (above input):** Shows buffer name, mode (Leap/Edit/Open), language mode (`lang=text|go|markdown|c|miranda`), cwd, `*unsaved*` marker, and last event.
 - **Input (bottom):** Used for prompts (e.g., Save as). Type to respond; Enter confirms; Esc cancels.
+  - In Go mode, if caret is on a syntax-error line, this line shows the current parser error in red.
 
 ## Syntax Highlighting
 
@@ -88,6 +91,7 @@ go build -o gc .
 
 - In Go mode, source is parsed with Go's parser (`parser.AllErrors`).
 - Any line with a parse error is marked with a red gutter indicator.
+- When caret is on an error line, the bottom input/info line shows that specific error in red.
 - Syntax checking is disabled for non-Go buffers.
 
 ## Tips & Examples

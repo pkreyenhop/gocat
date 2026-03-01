@@ -19,13 +19,15 @@ type completionItem struct {
 	Label  string
 	Insert string
 	Detail string
+	Doc    string
 }
 
 type lspCompletionItem struct {
-	Label            string `json:"label"`
-	InsertText       string `json:"insertText"`
-	InsertTextFormat int    `json:"insertTextFormat"`
-	Detail           string `json:"detail"`
+	Label            string          `json:"label"`
+	InsertText       string          `json:"insertText"`
+	InsertTextFormat int             `json:"insertTextFormat"`
+	Detail           string          `json:"detail"`
+	Documentation    json.RawMessage `json:"documentation"`
 	TextEdit         struct {
 		NewText string `json:"newText"`
 	} `json:"textEdit"`
@@ -334,6 +336,7 @@ func mapCompletionItems(items []lspCompletionItem) []completionItem {
 			Label:  it.Label,
 			Insert: text,
 			Detail: it.Detail,
+			Doc:    parseMarkupText(it.Documentation),
 		})
 		if len(out) >= 20 {
 			break
@@ -349,18 +352,25 @@ func parseHoverText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &payload); err != nil || len(payload.Contents) == 0 {
 		return ""
 	}
+	return parseMarkupText(payload.Contents)
+}
+
+func parseMarkupText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
 	var s string
-	if err := json.Unmarshal(payload.Contents, &s); err == nil {
+	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
 	var markup struct {
 		Value string `json:"value"`
 	}
-	if err := json.Unmarshal(payload.Contents, &markup); err == nil && markup.Value != "" {
+	if err := json.Unmarshal(raw, &markup); err == nil && markup.Value != "" {
 		return markup.Value
 	}
 	var arr []json.RawMessage
-	if err := json.Unmarshal(payload.Contents, &arr); err == nil {
+	if err := json.Unmarshal(raw, &arr); err == nil {
 		var out strings.Builder
 		for _, it := range arr {
 			var ss string

@@ -16,10 +16,11 @@ import (
 
 func screenRowText(s tcell.SimulationScreen, y, w int) string {
 	var b strings.Builder
-	for x := 0; x < w; x++ {
-		r, _, _, _ := s.GetContent(x, y)
-		if r == 0 {
-			r = ' '
+	for x := range w {
+		str, _, _ := s.Get(x, y)
+		r := ' '
+		if str != "" {
+			r = []rune(str)[0]
 		}
 		b.WriteRune(r)
 	}
@@ -77,7 +78,7 @@ func TestDrawStyledTUICellLine_TabKeepsStyleAlignment(t *testing.T) {
 	styles := []tokenStyle{styleDefault, styleKeyword, styleKeyword, styleDefault, styleDefault}
 	drawStyledTUICellLine(s, 0, 0, line, styles, base, 0, nil)
 
-	_, _, got, _ := s.GetContent(tabWidth, 0)
+	_, got, _ := s.Get(tabWidth, 0)
 	gotFg, _, _ := got.Decompose()
 	wantFg, _, _ := tuiStyleForToken(base, styleKeyword).Decompose()
 	if gotFg != wantFg {
@@ -115,7 +116,11 @@ func TestDrawTUIShowsGoSyntaxErrorMarkerInGutter(t *testing.T) {
 
 	drawTUI(s, &app)
 
-	ch, _, st, _ := s.GetContent(0, 1)
+	str, st, _ := s.Get(0, 1)
+	ch := rune(0)
+	if str != "" {
+		ch = []rune(str)[0]
+	}
 	if ch != '!' {
 		t.Fatalf("expected syntax marker '!' on error line, got %q", ch)
 	}
@@ -146,10 +151,52 @@ func TestDrawTUIShowsCurrentSyntaxErrorOnBottomLine(t *testing.T) {
 	if !strings.Contains(row, "Go syntax error:") {
 		t.Fatalf("expected bottom line syntax error message, got %q", strings.TrimSpace(row))
 	}
-	_, _, st, _ := s.GetContent(0, 23)
+	_, st, _ := s.Get(0, 23)
 	fg, _, _ := st.Decompose()
 	if fg != tcell.ColorIndianRed {
 		t.Fatalf("expected bottom line in red, got %v", fg)
+	}
+}
+
+func TestCompletionDetailInterruptShowsDetailsAfterDelay(t *testing.T) {
+	app := appState{}
+	app.completionPopup = completionPopupState{
+		active:        true,
+		items:         []completionItem{{Label: "Println", Detail: "func Println(a ...any)", Doc: "```go\nfmt.Println(\"x\")\n```"}},
+		selected:      0,
+		detailToken:   5,
+		detailDelay:   time.Second,
+		detailArmedAt: time.Now().Add(-2 * time.Second),
+	}
+
+	handleTUIInterrupt(&app, tcell.NewEventInterrupt(completionDetailInterrupt{Token: 5}))
+	if !app.completionPopup.detailVisible {
+		t.Fatal("expected completion detail popup to become visible")
+	}
+	if !strings.Contains(app.completionPopup.detailText, "Completion: Println") {
+		t.Fatalf("unexpected detail text: %q", app.completionPopup.detailText)
+	}
+}
+
+func TestDrawTUICompletionDetailPopupAnchorsUpperRight(t *testing.T) {
+	s := tcell.NewSimulationScreen("UTF-8")
+	if err := s.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer s.Fini()
+	s.SetSize(100, 30)
+
+	app := appState{}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.completionPopup.active = true
+	app.completionPopup.detailVisible = true
+	app.completionPopup.detailText = "Completion: Println\n\nSignature:\nfunc Println(a ...any)"
+
+	drawTUICompletionDetailPopup(s, &app, 100, 30)
+	// Upper-right anchored popup should place the top border near the right edge on row 1.
+	str, _, _ := s.Get(98, 1)
+	if str != "┐" {
+		t.Fatalf("expected top-right popup corner at upper-right, got %q", str)
 	}
 }
 

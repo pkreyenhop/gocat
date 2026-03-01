@@ -32,15 +32,17 @@
   - `Esc+Space` enters less mode: `Space` pages forward, `Esc` exits less mode.
   - Comment toggle: `Ctrl+/` toggles `//` on selection or current line.
   - Clipboard: `Ctrl+C` copy, `Ctrl+X` cut, `Ctrl+V` paste.
-  - Go autocompletion: in Go mode, `Tab` first applies deterministic Go keyword completion for unique prefix matches, then falls back to `gopls`; `gopls` completions auto-insert only when prefix length is at least 3, exactly one candidate is returned, and insert text is identifier-safe (no popup choices).
-  - If `gopls` is unavailable, `Tab` falls back to deterministic Go keyword completion when the current prefix has exactly one keyword match.
+  - Go autocompletion: in Go mode, `Tab` first applies deterministic Go keyword completion for unique prefix matches and imported-package-name expansion for unique import prefixes.
+  - Selector completion (`pkg.` / `pkg.pref`) opens a popup with `gopls` candidates; `Tab`/`Shift+Tab` (or Up/Down) move selection, Enter applies, Esc cancels.
+  - If a completion popup selection is idle briefly, an upper-right detail popup appears with signature/description and formatted code examples.
+  - If `gopls` is unavailable, selector popup completion is skipped; deterministic keyword/import-prefix completions still work.
   - In Go mode, `Esc+i` toggles a symbol-info popup for the symbol under cursor (keyword/builtin docs with usage examples, local definition lookup, and `gopls` hover fallback); `Esc` closes the popup; `Up/Down`, `PageUp/PageDown`, `Home/End` scroll long popup content.
 
 - **UI & rendering**
   - Purple palette with line-number gutter; current line is highlighted; caret is a blinking block.
   - Editor text storage is gap-buffer-backed; runtime code uses editor accessor methods rather than mutating internal slices directly.
   - Go buffers (`.go` path or first non-empty line starting with `package `) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings, numbers, and keywords.
-  - Go buffers run syntax checking via the Go parser; lines with parse errors show a red gutter marker.
+  - Go buffers run syntax checking via the Go parser; lines with parse errors show a red gutter marker, and the bottom input/info line shows the current-line error in red.
   - Markdown buffers (`.md`/`.markdown`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for headings and links.
   - C buffers (`.c`/`.h`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings/chars, numeric literals, and C keywords.
   - Miranda buffers (`.m`) use pure-Go Tree-sitter highlighting (`gotreesitter`, no CGO) for comments, strings/chars, numeric literals, and declaration keywords.

@@ -75,18 +75,6 @@ func (c *goSyntaxChecker) lineErrorsFor(path string, buf []rune) map[int]struct{
 	return out
 }
 
-func (c *goSyntaxChecker) messageForLine(line int) (string, bool) {
-	if c == nil || line < 0 {
-		return "", false
-	}
-	msg, ok := c.lineMsgs[line]
-	msg = strings.TrimSpace(msg)
-	if !ok || msg == "" {
-		return "", false
-	}
-	return msg, true
-}
-
 func pathForParse(path string) string {
 	if strings.TrimSpace(path) == "" {
 		return "untitled.go"

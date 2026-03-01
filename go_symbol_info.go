@@ -316,13 +316,7 @@ func analyzeGoCaretContext(src string, caret int) goCaretContext {
 	if tf == nil {
 		return goCaretContext{}
 	}
-	off := runeOffsetToByteOffset(src, caret)
-	if off < 0 {
-		off = 0
-	}
-	if off > tf.Size() {
-		off = tf.Size()
-	}
+	off := min(max(runeOffsetToByteOffset(src, caret), 0), tf.Size())
 	pos := tf.Pos(off)
 
 	if file.Name != nil && containsPos(file.Name, pos) {
@@ -455,13 +449,7 @@ func findLocalDefinitionFromSource(src, sym string, caret int) (string, bool) {
 	if tf == nil {
 		return "", false
 	}
-	off := runeOffsetToByteOffset(src, caret)
-	if off < 0 {
-		off = 0
-	}
-	if off > tf.Size() {
-		off = tf.Size()
-	}
+	off := min(max(runeOffsetToByteOffset(src, caret), 0), tf.Size())
 	caretPos := tf.Pos(off)
 	lines := strings.Split(src, "\n")
 	type candidate struct {

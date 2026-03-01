@@ -39,6 +39,12 @@ type bufferSlot struct {
 	cachedLines      []string
 	cachedLineStyles [][]tokenStyle
 	cachedLangMode   string
+	// Per-buffer cached syntax-check data keyed by textRev/mode/path.
+	syntaxErrTextRev int
+	syntaxErrPath    string
+	syntaxErrMode    syntaxKind
+	syntaxErrLines   map[int]struct{}
+	syntaxErrMsgs    map[int]string
 }
 
 type renderCache struct {
@@ -104,12 +110,21 @@ type appState struct {
 }
 
 type completionPopupState struct {
-	active       bool
-	title        string
-	items        []completionItem
-	selected     int
-	replaceStart int
-	replaceEnd   int
+	active        bool
+	title         string
+	items         []completionItem
+	selected      int
+	replaceStart  int
+	replaceEnd    int
+	detailText    string
+	detailVisible bool
+	detailArmedAt time.Time
+	detailToken   int
+	detailDelay   time.Duration
+}
+
+type completionDetailInterrupt struct {
+	Token int
 }
 
 type helpEntry struct {
@@ -208,6 +223,11 @@ func (app *appState) markDirty() {
 	app.buffers[app.bufIdx].rev++
 	app.buffers[app.bufIdx].textRev++
 	app.buffers[app.bufIdx].dirty = true
+	app.buffers[app.bufIdx].syntaxErrTextRev = 0
+	app.buffers[app.bufIdx].syntaxErrPath = ""
+	app.buffers[app.bufIdx].syntaxErrMode = syntaxNone
+	app.buffers[app.bufIdx].syntaxErrLines = nil
+	app.buffers[app.bufIdx].syntaxErrMsgs = nil
 }
 
 func (app *appState) touchBuffer(idx int) {
@@ -223,6 +243,11 @@ func (app *appState) touchBufferText(idx int) {
 	}
 	app.buffers[idx].rev++
 	app.buffers[idx].textRev++
+	app.buffers[idx].syntaxErrTextRev = 0
+	app.buffers[idx].syntaxErrPath = ""
+	app.buffers[idx].syntaxErrMode = syntaxNone
+	app.buffers[idx].syntaxErrLines = nil
+	app.buffers[idx].syntaxErrMsgs = nil
 }
 
 func (app *appState) touchActiveBuffer() {
@@ -956,6 +981,29 @@ func bufferSyntaxKind(app *appState, path string, buf []rune) syntaxKind {
 	return detectSyntax(path, string(buf))
 }
 
+func activeBufferSyntaxErrors(app *appState, kind syntaxKind, path string) (map[int]struct{}, map[int]string) {
+	if app == nil || app.ed == nil || app.syntaxCheck == nil || kind != syntaxGo {
+		return nil, nil
+	}
+	if app.bufIdx < 0 || app.bufIdx >= len(app.buffers) {
+		return nil, nil
+	}
+	slot := &app.buffers[app.bufIdx]
+	if slot.syntaxErrTextRev == slot.textRev &&
+		slot.syntaxErrMode == kind &&
+		slot.syntaxErrPath == path {
+		return slot.syntaxErrLines, slot.syntaxErrMsgs
+	}
+	lines := app.syntaxCheck.lineErrorsFor(path, app.ed.Runes())
+	msgs := app.syntaxCheck.lineMsgs
+	slot.syntaxErrTextRev = slot.textRev
+	slot.syntaxErrMode = kind
+	slot.syntaxErrPath = path
+	slot.syntaxErrLines = lines
+	slot.syntaxErrMsgs = msgs
+	return lines, msgs
+}
+
 func cycleBufferMode(app *appState) string {
 	if app == nil || app.bufIdx < 0 || app.bufIdx >= len(app.buffers) {
 		return "text"
@@ -1105,6 +1153,10 @@ func openCompletionPopup(app *appState, title string, items []completionItem, re
 	app.completionPopup.selected = 0
 	app.completionPopup.replaceStart = replaceStart
 	app.completionPopup.replaceEnd = replaceEnd
+	if app.completionPopup.detailDelay <= 0 {
+		app.completionPopup.detailDelay = 700 * time.Millisecond
+	}
+	armCompletionPopupDetails(app)
 	app.lastEvent = fmt.Sprintf("Completion: %d candidates (Tab/Shift+Tab, Enter)", len(items))
 }
 
@@ -1121,6 +1173,7 @@ func completionPopupMove(app *appState, delta int) {
 	}
 	n := len(app.completionPopup.items)
 	app.completionPopup.selected = (app.completionPopup.selected + delta + n) % n
+	armCompletionPopupDetails(app)
 }
 
 func completionPopupApplySelection(app *appState) bool {
@@ -1150,6 +1203,43 @@ func completionPopupApplySelection(app *appState) bool {
 	app.markDirty()
 	app.lastEvent = "Completed"
 	return true
+}
+
+func armCompletionPopupDetails(app *appState) {
+	if app == nil || !app.completionPopup.active || len(app.completionPopup.items) == 0 {
+		return
+	}
+	if app.completionPopup.detailDelay <= 0 {
+		app.completionPopup.detailDelay = 700 * time.Millisecond
+	}
+	app.completionPopup.detailVisible = false
+	app.completionPopup.detailText = ""
+	app.completionPopup.detailArmedAt = time.Now()
+	app.completionPopup.detailToken++
+	if app.requestInterrupt == nil {
+		return
+	}
+	token := app.completionPopup.detailToken
+	delay := app.completionPopup.detailDelay
+	post := app.requestInterrupt
+	time.AfterFunc(delay, func() {
+		post(completionDetailInterrupt{Token: token})
+	})
+}
+
+func completionPopupDetailText(item completionItem) string {
+	label := strings.TrimSpace(item.Label)
+	if label == "" {
+		label = strings.TrimSpace(item.Insert)
+	}
+	out := "Completion: " + label
+	if detail := strings.TrimSpace(item.Detail); detail != "" {
+		out += "\n\nSignature:\n" + strings.TrimSpace(strings.ReplaceAll(detail, "\n", " "))
+	}
+	if doc := strings.TrimSpace(item.Doc); doc != "" {
+		out += "\n\nDescription:\n" + formatHoverMarkdown(doc)
+	}
+	return out
 }
 
 func importedPackageNames(src string) []string {

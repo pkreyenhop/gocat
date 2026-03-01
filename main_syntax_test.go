@@ -173,13 +173,16 @@ func TestStripSnippet(t *testing.T) {
 }
 
 func TestParseCompletionItems(t *testing.T) {
-	raw := json.RawMessage(`[{"label":"Printf","insertText":"Printf(${1:format})","insertTextFormat":2}]`)
+	raw := json.RawMessage(`[{"label":"Printf","insertText":"Printf(${1:format})","insertTextFormat":2,"documentation":{"kind":"markdown","value":"` + "`" + `Printf` + "`" + ` writes formatted output"}}]`)
 	items := parseCompletionItems(raw)
 	if len(items) != 1 {
 		t.Fatalf("len(items)=%d, want 1", len(items))
 	}
 	if items[0].Insert != "Printf(format)" {
 		t.Fatalf("insert=%q, want %q", items[0].Insert, "Printf(format)")
+	}
+	if !strings.Contains(items[0].Doc, "Printf") {
+		t.Fatalf("doc=%q, want contains Printf", items[0].Doc)
 	}
 }
 
@@ -312,6 +315,24 @@ func TestSelectorCompletionPopupAndApply(t *testing.T) {
 	}
 	if !strings.Contains(app.ed.String(), "fmt.Println") {
 		t.Fatalf("expected selected completion to apply, got %q", app.ed.String())
+	}
+}
+
+func TestCompletionPopupDetailTextIncludesDocFormatting(t *testing.T) {
+	item := completionItem{
+		Label:  "Println",
+		Detail: "func Println(a ...any) (n int, err error)",
+		Doc:    "Writes output.\n\n```go\nfmt.Println(\"x\")\n```",
+	}
+	got := completionPopupDetailText(item)
+	if !strings.Contains(got, "Completion: Println") {
+		t.Fatalf("expected completion header, got %q", got)
+	}
+	if !strings.Contains(got, "Signature:") {
+		t.Fatalf("expected signature section, got %q", got)
+	}
+	if !strings.Contains(got, "Code (go):") {
+		t.Fatalf("expected formatted code section, got %q", got)
 	}
 }
 
@@ -478,6 +499,40 @@ func TestParseHoverText(t *testing.T) {
 	raw3 := json.RawMessage(`{"contents":[{"kind":"markdown","value":"a"},"b"]}`)
 	if got := parseHoverText(raw3); got != "a\nb" {
 		t.Fatalf("parseHoverText array=%q", got)
+	}
+	if got := parseMarkupText(json.RawMessage(`{"kind":"markdown","value":"hello"}`)); got != "hello" {
+		t.Fatalf("parseMarkupText markup=%q", got)
+	}
+}
+
+func TestImportedPackageNames(t *testing.T) {
+	src := "package main\nimport (\n\t\"fmt\"\n\tioalias \"io\"\n\t_ \"net/http/pprof\"\n)\n"
+	got := importedPackageNames(src)
+	if len(got) != 2 {
+		t.Fatalf("importedPackageNames len=%d, want 2 (%v)", len(got), got)
+	}
+	if got[0] != "fmt" || got[1] != "ioalias" {
+		t.Fatalf("importedPackageNames=%v, want [fmt ioalias]", got)
+	}
+}
+
+func TestActiveBufferSyntaxErrorsUsesBufferCache(t *testing.T) {
+	app := appState{syntaxCheck: newGoSyntaxChecker()}
+	app.initBuffers(editor.NewEditor("package main\nfunc main() {\n"))
+	app.currentPath = "bad.go"
+	app.buffers[0].path = "bad.go"
+	app.buffers[0].mode = syntaxGo
+
+	lines1, msgs1 := activeBufferSyntaxErrors(&app, syntaxGo, app.currentPath)
+	if len(lines1) == 0 || len(msgs1) == 0 {
+		t.Fatalf("expected syntax errors and messages, got lines=%v msgs=%v", lines1, msgs1)
+	}
+	// Mutating checker cache should not affect active-buffer result until text rev changes.
+	app.syntaxCheck.lineErrors = nil
+	app.syntaxCheck.lineMsgs = nil
+	lines2, msgs2 := activeBufferSyntaxErrors(&app, syntaxGo, app.currentPath)
+	if len(lines2) == 0 || len(msgs2) == 0 {
+		t.Fatalf("expected cached syntax errors, got lines=%v msgs=%v", lines2, msgs2)
 	}
 }
 

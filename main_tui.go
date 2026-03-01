@@ -98,22 +98,40 @@ func handleTUIInterrupt(app *appState, ev *tcell.EventInterrupt) {
 	if app == nil || ev == nil {
 		return
 	}
-	token, ok := ev.Data().(int)
-	if !ok || token != app.escHelpToken {
-		return
+	switch data := ev.Data().(type) {
+	case int:
+		if data != app.escHelpToken {
+			return
+		}
+		delay := app.escHelpDelay
+		if delay <= 0 {
+			delay = 700 * time.Millisecond
+		}
+		if !app.cmdPrefixActive || app.escHelpVisible {
+			return
+		}
+		// A newer prefix key may already have consumed Esc; only show help after the full delay.
+		if time.Since(app.escPrefixAt) < delay {
+			return
+		}
+		app.escHelpVisible = true
+	case completionDetailInterrupt:
+		if !app.completionPopup.active || data.Token != app.completionPopup.detailToken {
+			return
+		}
+		delay := app.completionPopup.detailDelay
+		if delay <= 0 {
+			delay = 700 * time.Millisecond
+		}
+		if time.Since(app.completionPopup.detailArmedAt) < delay {
+			return
+		}
+		if app.completionPopup.selected < 0 || app.completionPopup.selected >= len(app.completionPopup.items) {
+			return
+		}
+		app.completionPopup.detailText = completionPopupDetailText(app.completionPopup.items[app.completionPopup.selected])
+		app.completionPopup.detailVisible = strings.TrimSpace(app.completionPopup.detailText) != ""
 	}
-	delay := app.escHelpDelay
-	if delay <= 0 {
-		delay = 700 * time.Millisecond
-	}
-	if !app.cmdPrefixActive || app.escHelpVisible {
-		return
-	}
-	// A newer prefix key may already have consumed Esc; only show help after the full delay.
-	if time.Since(app.escPrefixAt) < delay {
-		return
-	}
-	app.escHelpVisible = true
 }
 
 func handleTUIKey(app *appState, ev *tcell.EventKey) bool {
@@ -405,6 +423,17 @@ func drawTUI(s tcell.Screen, app *appState) {
 	}
 
 	lines, lineStyles, langMode, lineStarts := renderData(app)
+	kind := syntaxNone
+	switch langMode {
+	case "go":
+		kind = syntaxGo
+	case "markdown":
+		kind = syntaxMarkdown
+	case "c":
+		kind = syntaxC
+	case "miranda":
+		kind = syntaxMiranda
+	}
 	lineH := 1
 	contentH := h - 2
 	cLine := editor.CaretLineAt(lines, app.ed.Caret)
@@ -420,7 +449,7 @@ func drawTUI(s tcell.Screen, app *appState) {
 	if app.syntaxCheck == nil {
 		app.syntaxCheck = newGoSyntaxChecker()
 	}
-	lineErrors := app.syntaxCheck.lineErrorsFor(app.currentPath, app.ed.Runes())
+	lineErrors, lineErrMsgs := activeBufferSyntaxErrors(app, kind, app.currentPath)
 	var sel *selectionRange
 	if app.ed.Sel.Active {
 		selA, selB := app.ed.Sel.Normalised()
@@ -472,7 +501,7 @@ func drawTUI(s tcell.Screen, app *appState) {
 		input = "Search: " + string(app.searchQuery)
 	} else if app.ed.Leap.Active {
 		input = "Leap: " + string(app.ed.Leap.Query)
-	} else if msg, ok := app.syntaxCheck.messageForLine(cLine); ok {
+	} else if msg, ok := lineErrMsgs[cLine]; ok && strings.TrimSpace(msg) != "" {
 		input = "Go syntax error: " + msg
 		inputStyle = tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorIndianRed)
 	} else {
@@ -485,6 +514,9 @@ func drawTUI(s tcell.Screen, app *appState) {
 	}
 	if app.completionPopup.active {
 		drawTUICompletionPopup(s, app, w, h)
+		if app.completionPopup.detailVisible {
+			drawTUICompletionDetailPopup(s, app, w, h)
+		}
 	}
 	if app.escHelpVisible {
 		drawTUIEscHelpPopup(s, w, h)
@@ -1060,7 +1092,7 @@ func drawTUICompletionPopup(s tcell.Screen, app *appState, w, h int) {
 	if app.completionPopup.selected >= rows {
 		start = app.completionPopup.selected - rows + 1
 	}
-	for row := 0; row < rows; row++ {
+	for row := range rows {
 		idx := start + row
 		if idx >= len(app.completionPopup.items) {
 			break
@@ -1087,4 +1119,60 @@ func completionPopupLine(item completionItem) string {
 		return label
 	}
 	return label + "  —  " + detail
+}
+
+func drawTUICompletionDetailPopup(s tcell.Screen, app *appState, w, h int) {
+	if app == nil || !app.completionPopup.active || !app.completionPopup.detailVisible {
+		return
+	}
+	text := strings.TrimSpace(app.completionPopup.detailText)
+	if text == "" {
+		return
+	}
+	bg := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	border := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorDarkCyan)
+	title := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorLightYellow)
+
+	boxW := min(w-8, 88)
+	if boxW < 36 {
+		boxW = w - 2
+	}
+	boxH := min(h-4, 14)
+	if boxH < 6 {
+		boxH = h - 2
+	}
+	x := max(1, w-boxW-1)
+	y := 1
+
+	for yy := range boxH {
+		for xx := 0; xx < boxW; xx++ {
+			ch := ' '
+			st := bg
+			if yy == 0 || yy == boxH-1 || xx == 0 || xx == boxW-1 {
+				ch = '│'
+				if yy == 0 || yy == boxH-1 {
+					ch = '─'
+				}
+				if yy == 0 && xx == 0 {
+					ch = '┌'
+				} else if yy == 0 && xx == boxW-1 {
+					ch = '┐'
+				} else if yy == boxH-1 && xx == 0 {
+					ch = '└'
+				} else if yy == boxH-1 && xx == boxW-1 {
+					ch = '┘'
+				}
+				st = border
+			}
+			s.SetContent(x+xx, y+yy, ch, nil, st)
+		}
+	}
+	drawCellText(s, x+2, y+1, padRight("Completion Details", boxW-4), title)
+	contentW := boxW - 4
+	lines := wrapPopupText(text, max(12, contentW))
+	maxLines := boxH - 3
+	for i := 0; i < maxLines && i < len(lines); i++ {
+		st := symbolPopupLineStyle(lines[i], bg, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorLightGreen).Attributes(tcell.AttrItalic))
+		drawCellText(s, x+2, y+2+i, padRight(lines[i], contentW), st)
+	}
 }
