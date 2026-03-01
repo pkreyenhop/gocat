@@ -11,7 +11,7 @@
   - `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers.
   - `Ctrl+O` opens a file-picker rooted at the current dir (skips dot/vendor); `..` goes up; directories end with `/` and open in-place; `Ctrl+L` loads the selected path (new buffer or switch if already loaded).
   - Startup loads multiple filenames (skips directories). Missing filenames open empty buffers and are created on first save.
-  - `Ctrl+W` saves current; unnamed buffers prompt in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers.
+  - `Esc+W` opens write/save-as prompt for current buffer in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers.
   - `Esc+F` saves current file, runs `go fmt` and `go fix`, then reloads the file into the active buffer.
   - `Ctrl+R` invokes `go run .` in the active file directory and opens a new run-output buffer with command header, streamed stdout/stderr (`[stderr]` prefix), and trailing `[exit]` status.
   - `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits. `Esc` is a command prefix; `Esc` then `Esc` closes the current buffer, `Esc` then `Shift+Q` quits all, and `Esc` then `Shift+S` saves dirty buffers.

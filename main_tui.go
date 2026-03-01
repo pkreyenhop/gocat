@@ -376,8 +376,6 @@ func tcellKeyToKeyCode(ev *tcell.EventKey) (keyCode, bool) {
 		return keyU, true
 	case tcell.KeyCtrlV:
 		return keyV, true
-	case tcell.KeyCtrlW:
-		return keyW, true
 	case tcell.KeyCtrlX:
 		return keyX, true
 	case tcell.KeyRune:
@@ -496,7 +494,7 @@ var escHelpCategories = []escShortcutCategory{
 		title: "Files",
 		items: []string{
 			"b  new buffer",
-			"w  save current",
+			"w  write as...",
 			"f  save + fmt/fix + reload",
 			"S  save dirty buffers",
 		},
@@ -781,8 +779,6 @@ func ctrlRuneToKey(r rune) (keyCode, bool) {
 	switch unicode.ToLower(r) {
 	case 'q':
 		return keyQ, true
-	case 'w':
-		return keyW, true
 	case 'e':
 		return keyE, true
 	case 'r':

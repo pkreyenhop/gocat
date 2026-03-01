@@ -109,7 +109,7 @@ var helpEntries = []helpEntry{
 	{"Leap Again", "N/A in TUI mode"},
 	{"New buffer / cycle buffers", "Ctrl+B / Shift+Tab"},
 	{"File picker / load line path", "Ctrl+O / Ctrl+L"},
-	{"Save current / save all", "Ctrl+W / Esc+Shift+S"},
+	{"Write as / save all", "Esc+W / Esc+Shift+S"},
 	{"Save + fmt/fix + reload", "Esc+F"},
 	{"Run package (go run .)", "Ctrl+R"},
 	{"Close buffer / quit", "Ctrl+Q / Esc+Shift+Q"},
@@ -248,11 +248,7 @@ func saveCurrent(app *appState) error {
 	}
 	path := app.currentPath
 	if path == "" {
-		app.inputActive = true
-		app.inputPrompt = "Save as: "
-		app.inputValue = ""
-		app.inputKind = "save"
-		app.lastEvent = "Save: enter filename in input line, Enter to confirm, Esc to cancel"
+		promptSaveAs(app)
 		return fmt.Errorf("no path")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -265,6 +261,17 @@ func saveCurrent(app *appState) error {
 	app.buffers[app.bufIdx].dirty = false
 	app.touchActiveBuffer()
 	return nil
+}
+
+func promptSaveAs(app *appState) {
+	if app == nil {
+		return
+	}
+	app.inputActive = true
+	app.inputPrompt = "Save as: "
+	app.inputValue = ""
+	app.inputKind = "save"
+	app.lastEvent = "Save: enter filename in input line, Enter to confirm, Esc to cancel"
 }
 
 func saveAll(app *appState) error {

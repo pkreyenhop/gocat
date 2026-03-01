@@ -32,6 +32,9 @@ func TestCtrlRuneToKey(t *testing.T) {
 	if got, ok := ctrlRuneToKey('>'); !ok || got != keyPeriod {
 		t.Fatalf("ctrlRuneToKey('>') = %v %v, want keyPeriod true", got, ok)
 	}
+	if _, ok := ctrlRuneToKey('w'); ok {
+		t.Fatalf("ctrlRuneToKey('w') should be disabled")
+	}
 }
 
 func TestTcellCtrlIMapsToTab(t *testing.T) {
@@ -39,6 +42,13 @@ func TestTcellCtrlIMapsToTab(t *testing.T) {
 	got, ok := tcellKeyToKeyCode(ev)
 	if !ok || got != keyTab {
 		t.Fatalf("tcellKeyToKeyCode(CtrlI) = %v %v, want keyTab true", got, ok)
+	}
+}
+
+func TestTcellCtrlWDisabled(t *testing.T) {
+	ev := tcell.NewEventKey(tcell.KeyCtrlW, 0, tcell.ModCtrl)
+	if _, ok := tcellKeyToKeyCode(ev); ok {
+		t.Fatal("tcellKeyToKeyCode(CtrlW) should be disabled")
 	}
 }
 
@@ -95,6 +105,45 @@ func TestTUIEscPrefixThenFInvokesFormat(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("Esc then f should invoke format command")
+	}
+}
+
+func TestTUIEscPrefixWPromptsAndSavesToProvidedFilename(t *testing.T) {
+	dir := t.TempDir()
+	app := appState{openRoot: dir}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = filepath.Join(dir, "old.go")
+	app.buffers[0].path = app.currentPath
+
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEscape, 0, 0)) {
+		t.Fatal("Esc should arm prefix mode")
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, 'w', 0)) {
+		t.Fatal("Esc+w should open write prompt")
+	}
+	if !app.inputActive || app.inputKind != "save" {
+		t.Fatalf("expected save prompt active, got inputActive=%v inputKind=%q", app.inputActive, app.inputKind)
+	}
+
+	for _, r := range "new.go" {
+		if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyRune, r, 0)) {
+			t.Fatalf("typing %q should continue", string(r))
+		}
+	}
+	if !handleTUIKey(&app, tcell.NewEventKey(tcell.KeyEnter, 0, 0)) {
+		t.Fatal("Enter should commit save prompt")
+	}
+
+	wantPath := filepath.Join(dir, "new.go")
+	if app.currentPath != wantPath {
+		t.Fatalf("currentPath=%q, want %q", app.currentPath, wantPath)
+	}
+	got, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if string(got) != "package main\n" {
+		t.Fatalf("saved content=%q, want %q", string(got), "package main\n")
 	}
 }
 

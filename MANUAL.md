@@ -65,7 +65,7 @@ go build -o gc .
 
 - **New / cycle buffers:** `Ctrl+B` creates `<untitled>`; `Shift+Tab` cycles.
 - **File picker:** `Ctrl+O` opens a picker buffer rooted at the current directory; entries start with `..` to go up. Move the caret to a line and press `Ctrl+L` to open; directories open in-place; files open in new buffers or switch if already loaded.
-- **Save current:** `Ctrl+W` saves the active buffer. If unnamed (`<untitled>`), the input line prompts “Save as:” — type a path and press Enter.
+- **Write/save-as:** `Esc+W` opens the write prompt for the active buffer. Type a path and press Enter to save.
 - **Save + fmt/fix + reload:** `Esc+F` saves current file, runs `go fmt` and `go fix` in the file's directory package context, then reloads the file into the current buffer.
 - **Run package:** `Ctrl+R` invokes `go run .` in the active file's directory and opens a run-output buffer. It writes the executed command header first, streams stdout/stderr (`[stderr]`-prefixed), then appends an `[exit]` result line.
 - **Save dirty buffers:** `Esc+Shift+S` saves only buffers marked dirty.
@@ -95,5 +95,5 @@ go build -o gc .
 - **Jump around text:** leap remains available in editor core, but is currently unbound in TUI mode.
 - **Indent quickly:** Press space twice on a line to insert a tab at its start.
 - **Open by pattern:** `Ctrl+O`, type a few letters to filter/select the filename, `Ctrl+L` to open. Use `..` to go up a directory.
-- **Save unnamed buffer:** `Ctrl+W`, type `notes/todo.txt` in the input line, Enter — file is created and saved, buffer is renamed.
+- **Save unnamed buffer:** `Esc+W`, type `notes/todo.txt` in the input line, Enter — file is created and saved, buffer is renamed.
 - **Multiple files:** `./gc file1.txt dir/file2.txt` opens two buffers; `Shift+Tab` cycles.

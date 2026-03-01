@@ -8,11 +8,11 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 
 - **Leap quasimode**: Leap is currently unbound in TUI mode.
 - **Leap selection model**: Leap selection remains in the editor core, but leap trigger keys are currently unbound in the TUI.
-- **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); move the caret to a filename and press `Ctrl+L` to load it. `Ctrl+W` saves the active buffer; unnamed buffers prompt in the input line (“Save as: …”). `Esc+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
+- **Buffers & files**: `Ctrl+B` creates a new `<untitled>` buffer; `Shift+Tab` cycles buffers. `Ctrl+O` opens a file-picker buffer (non-hidden/vendor under CWD); move the caret to a filename and press `Ctrl+L` to load it. `Esc+W` opens a write prompt (“Save as: …”) for the active buffer. `Esc+Shift+S` saves only dirty buffers. `Ctrl+Q` closes the current buffer; `Esc+Shift+Q` quits immediately. Startup accepts multiple filenames (regular files only), one buffer each; missing filenames open empty buffers and are created on first save.
 - **Save + format/fix/reload**: `Esc+F` saves the current file, runs `go fmt` and `go fix` for the file’s package directory, then reloads the file into the active buffer.
 - **Run package**: `Ctrl+R` invokes `go run .` in the active file’s directory and opens a new run-output buffer. The buffer starts with the command line, streams stdout/stderr (`[stderr]`-prefixed), and appends an `[exit]` status footer.
 - **Editing**: Text input, backspace/delete (with repeat), Delete removes the word under/left of the caret, Shift+Delete removes the current line, arrows and PageUp/Down (Shift to select), page scroll with `Ctrl+,` / `Ctrl+.`, line jumps (`Ctrl+A`/`Ctrl+E`), buffer jumps (`Ctrl+Shift+A`/`Ctrl+Shift+E`), comment toggle (`Ctrl+/` on selection or current line; `Ctrl+Shift+/` opens help buffer), kill-to-EOL (`Ctrl+K`), undo (`Ctrl+U`), Enter for newlines. Double-space indents the current line by inserting a tab at its start. Passing a missing filename opens an empty buffer with that name; the file is created on first save.
-- **Esc command mode**: `Esc` is a command prefix. Examples: `Esc+f` (format/fix/reload), `Esc+Shift+S` (save dirty buffers), `Esc+Shift+Q` (quit all), `Esc+i` (symbol info), `Esc+Esc` (close buffer).
+- **Esc command mode**: `Esc` is a command prefix. Examples: `Esc+w` (write-as prompt), `Esc+f` (format/fix/reload), `Esc+Shift+S` (save dirty buffers), `Esc+Shift+Q` (quit all), `Esc+i` (symbol info), `Esc+Esc` (close buffer).
 - **Esc delayed help popup**: If `Esc` is pressed and no next key is entered quickly, a bottom-right popup appears with grouped `Esc`-prefix commands (next-letter actions only).
 - **Search mode**: `Esc+/` starts incremental search. Type the pattern and the caret jumps to full matches while typing. Press `/` to lock the pattern, then use `Tab` / `Shift+Tab` to move next/previous (with wrap). Entering `/` with an empty pattern repeats the last non-empty search and jumps to the next match. After lock, `x` switches into line-highlight mode; other keys exit search and run their normal action.
 - **Line highlight mode**: `Esc+X` starts line highlighting at the current line. Press `x` again to extend by one more line each time. `Esc` exits line-highlight mode.
@@ -34,7 +34,7 @@ This prototype is a small Go TUI text editor (tcell-based) that demonstrates Can
 | Leap Again | N/A in TUI mode |
 | New buffer / cycle buffers | Ctrl+B / Shift+Tab |
 | File picker / load line path | Ctrl+O / Ctrl+L (listing starts with `..`; current-line filename opens new buffer or switches if already open) |
-| Save current / save all | Ctrl+W / Esc+Shift+S |
+| Write as / save all | Esc+W / Esc+Shift+S |
 | Save + fmt/fix + reload | Esc+F |
 | Run package (go run .) | Ctrl+R |
 | Close buffer / quit | Ctrl+Q / Esc+Shift+Q |
@@ -94,6 +94,6 @@ go build -o gc .
 ## TUI Frontend (`main_tui.go`)
 
 - Uses `tcell` for terminal rendering/input and routes key/text actions through the shared controller in `input_core.go`.
-- Keeps core shortcuts intact (`Ctrl+W`, `Ctrl+R`, `Ctrl+O`, `Ctrl+L`, editing/navigation/selection), including `Esc`-prefix command mode (`Esc+F`, `Esc+Shift+S`, `Esc+Shift+Q`, `Esc+I`, `Esc+M`, `Esc+Shift+Delete`) and less-mode paging.
+- Keeps core shortcuts intact (`Ctrl+R`, `Ctrl+O`, `Ctrl+L`, editing/navigation/selection), including `Esc`-prefix command mode (`Esc+W`, `Esc+F`, `Esc+Shift+S`, `Esc+Shift+Q`, `Esc+I`, `Esc+M`, `Esc+Shift+Delete`) and less-mode paging.
 - Leap activation is currently unbound in TUI mode.
 - Renders a lightweight terminal view with gutter, status, input line, and caret visibility management.

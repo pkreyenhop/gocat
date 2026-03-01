@@ -279,11 +279,11 @@ func handleKeyEvent(app *appState, e keyEvent) bool {
 				app.lastEvent = fmt.Sprintf("New buffer %d/%d", app.bufIdx+1, len(app.buffers))
 				return true
 			case keyW:
-				if err := saveCurrent(app); err != nil {
-					app.lastEvent = fmt.Sprintf("SAVE ERR: %v", err)
-				} else {
-					app.lastEvent = fmt.Sprintf("Saved %s", app.currentPath)
+				if prefixed {
+					promptSaveAs(app)
+					return true
 				}
+				app.lastEvent = "Use Esc+W to write"
 				return true
 			case keyF:
 				if !prefixed {
