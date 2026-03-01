@@ -603,12 +603,32 @@ func renderData(app *appState) ([]string, [][]tokenStyle, string, []int) {
 	if bufIdx >= 0 && bufIdx < len(app.buffers) {
 		forcedMode = app.buffers[bufIdx].mode
 	}
+	var slot *bufferSlot
+	if bufIdx >= 0 && bufIdx < len(app.buffers) {
+		slot = &app.buffers[bufIdx]
+	}
 	if app.render.bufIdx == bufIdx &&
 		app.render.textRev == textRev &&
 		app.render.mode == forcedMode &&
 		app.render.path == path &&
 		len(app.render.lines) > 0 {
 		return app.render.lines, app.render.lineStyles, app.render.langMode, app.render.lineStarts
+	}
+	if slot != nil &&
+		slot.cachedTextRev == textRev &&
+		slot.cachedMode == forcedMode &&
+		slot.cachedPath == path &&
+		len(slot.cachedLines) > 0 {
+		app.render = renderCache{
+			bufIdx:     bufIdx,
+			textRev:    textRev,
+			mode:       forcedMode,
+			path:       path,
+			lines:      slot.cachedLines,
+			lineStyles: slot.cachedLineStyles,
+			langMode:   slot.cachedLangMode,
+		}
+		return app.render.lines, app.render.lineStyles, app.render.langMode, nil
 	}
 
 	lines := editor.SplitLines(app.ed.Runes())
@@ -625,6 +645,14 @@ func renderData(app *appState) ([]string, [][]tokenStyle, string, []int) {
 	src := string(buf)
 	lineStyles := app.syntaxHL.lineStyleForKind(path, src, lines, kind)
 	langMode := syntaxKindLabel(kind)
+	if slot != nil {
+		slot.cachedTextRev = textRev
+		slot.cachedMode = forcedMode
+		slot.cachedPath = path
+		slot.cachedLines = lines
+		slot.cachedLineStyles = lineStyles
+		slot.cachedLangMode = langMode
+	}
 	app.render = renderCache{
 		bufIdx:     bufIdx,
 		textRev:    textRev,

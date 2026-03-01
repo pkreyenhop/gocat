@@ -29,6 +29,13 @@ type bufferSlot struct {
 	rev        int
 	textRev    int
 	mode       syntaxKind
+	// Per-buffer cached render data keyed by textRev/mode/path.
+	cachedTextRev    int
+	cachedMode       syntaxKind
+	cachedPath       string
+	cachedLines      []string
+	cachedLineStyles [][]tokenStyle
+	cachedLangMode   string
 }
 
 type renderCache struct {

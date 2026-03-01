@@ -785,6 +785,48 @@ func TestRenderDataCachesByBufferRevision(t *testing.T) {
 	}
 }
 
+func TestRenderDataUsesPerBufferCacheWhenSwitchingBack(t *testing.T) {
+	app := appState{syntaxHL: newGoHighlighter()}
+	app.initBuffers(editor.NewEditor("package main\n"))
+	app.currentPath = "a.go"
+	app.buffers[0].path = "a.go"
+
+	app.addBuffer()
+	app.buffers[1].ed.SetRunes([]rune("package main\nfunc main() {}\n"))
+	app.buffers[1].path = "b.go"
+	app.currentPath = "b.go"
+	app.markDirty()
+
+	app.switchBuffer(-1)
+	app.currentPath = "a.go"
+	lines0, _, _, _ := renderData(&app)
+	if len(lines0) == 0 {
+		t.Fatalf("expected non-empty lines for buffer 0")
+	}
+
+	// Poison buffer-0 cache and verify switching away/back reuses it.
+	app.buffers[0].cachedLines = []string{"cached-line"}
+	app.buffers[0].cachedLineStyles = [][]tokenStyle{{styleComment}}
+	app.buffers[0].cachedLangMode = "go"
+	app.buffers[0].cachedTextRev = app.buffers[0].textRev
+	app.buffers[0].cachedMode = app.buffers[0].mode
+	app.buffers[0].cachedPath = app.buffers[0].path
+
+	app.switchBuffer(1)
+	app.currentPath = "b.go"
+	_, _, _, _ = renderData(&app)
+
+	app.switchBuffer(-1)
+	app.currentPath = "a.go"
+	linesBack, stylesBack, _, _ := renderData(&app)
+	if len(linesBack) != 1 || linesBack[0] != "cached-line" {
+		t.Fatalf("expected per-buffer cached lines, got %#v", linesBack)
+	}
+	if len(stylesBack) != 1 || len(stylesBack[0]) != 1 || stylesBack[0][0] != styleComment {
+		t.Fatalf("expected per-buffer cached styles, got %#v", stylesBack)
+	}
+}
+
 func BenchmarkRenderDataCache(b *testing.B) {
 	var src strings.Builder
 	src.WriteString("package main\n\n")
@@ -833,6 +875,30 @@ func BenchmarkRenderDataCache(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
+			_, _, _, _ = renderData(&app)
+		}
+	})
+
+	b.Run("alternate-buffers", func(b *testing.B) {
+		app := appState{syntaxHL: newGoHighlighter()}
+		app.initBuffers(editor.NewEditor(text))
+		app.currentPath = "bench1.go"
+		app.buffers[0].path = "bench1.go"
+		app.addBuffer()
+		app.buffers[1].ed.SetRunes([]rune(text))
+		app.buffers[1].path = "bench2.go"
+		app.markDirty()
+		app.switchBuffer(-1)
+		app.currentPath = "bench1.go"
+		_, _, _, _ = renderData(&app)
+		app.switchBuffer(1)
+		app.currentPath = "bench2.go"
+		_, _, _, _ = renderData(&app)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			app.switchBuffer(1)
+			app.currentPath = app.buffers[app.bufIdx].path
 			_, _, _, _ = renderData(&app)
 		}
 	})
